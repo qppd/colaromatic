@@ -1,0 +1,26 @@
+# Firmware build artifacts
+*.bin
+*.elf
+*.hex
+*.map
+.pio/
+.pde/
+
+# Generated headers (baked from config)
+src/esp/ColAromatic/GenConfig.h
+src/esp/ColAromatic/GenFuzzy.h
+src/esp/ColAromatic/GenProfiles.h
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Contract material (client paperwork)
+docs/contract/
+*.pdf

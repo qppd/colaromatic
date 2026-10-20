@@ -1,0 +1,118 @@
+# 17 — Firmware: build, flashing and verification
+
+The controller firmware is an **Arduino IDE sketch** in `src/esp/ColAromatic/`.
+It has been compiled for the `esp32dev` target (recorded below). It has never
+been flashed, and nothing in this document is a hardware measurement.
+
+## 1. Layout
+
+| File | Contents |
+|---|---|
+| `ColAromatic.ino` | `setup()` and `loop()`; wires the components together |
+| `PINS.h` | every GPIO assignment — the single source of truth |
+| `CONF.h` | every timing, threshold and protocol constant |
+| `HeaterSafety.h/.cpp` | SSR and fan outputs, E-stop, over-temperature, host watchdog |
+| `HostLink.h/.cpp` | the ASCII serial protocol ([doc 05](05_serial_protocol.md)) |
+| `ThermocoupleSensor.h/.cpp` | MAX31856 K-type probe over SPI |
+| `ColorSensor.h/.cpp` | TCS3200 light-to-frequency sampling |
+| `EnoseSensor.h/.cpp` | BME688 gas sensor over I²C |
+| `AcousticSensor.h/.cpp` | envelope microphone, disabled until calibrated |
+
+To change a pin, edit `PINS.h`. To change a threshold, a cadence or a protocol
+constant, edit `CONF.h`. No other file should contain a GPIO number or a magic
+timing. `docs/04_wiring_and_pinmap.md` mirrors `PINS.h` and must be kept in step.
+
+## 2. Toolchain
+
+Arduino IDE 2.x, or `arduino-cli`, with:
+
+1. Board package **esp32:esp32** (Arduino-ESP32 3.x) from
+   `https://espressif.github.io/arduino-esp32/package_esp32_index.json`.
+2. Libraries from the Library Manager:
+   * Adafruit MAX31856 Library (1.2.8)
+   * Adafruit BME680 Library (2.0.6)
+   * Adafruit Unified Sensor (1.1.15) and Adafruit BusIO (dependencies)
+
+## 3. Build and flash
+
+Arduino IDE: open `src/esp/ColAromatic/ColAromatic.ino`, select
+**Tools → Board → ESP32 Arduino → ESP32 Dev Module**, then *Verify*. Upload with
+the board connected; the serial monitor runs at 115200 baud.
+
+From the command line:
+
+```bash
+arduino-cli config init --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+arduino-cli core update-index && arduino-cli core install esp32:esp32
+arduino-cli lib install "Adafruit MAX31856 Library" "Adafruit BME680 Library" "Adafruit Unified Sensor"
+
+arduino-cli compile --fqbn esp32:esp32:esp32 src/esp/ColAromatic
+arduino-cli upload  --fqbn esp32:esp32:esp32 -p COM7 src/esp/ColAromatic
+arduino-cli monitor -p COM7 -c baudrate=115200
+```
+
+### Recorded build (20 Oct 2026, Windows, Arduino-ESP32 3.3.12)
+
+```
+Sketch uses 332779 bytes (25%) of program storage space. Maximum is 1310720 bytes.
+Global variables use 24768 bytes (7%) of dynamic memory, leaving 302912 bytes
+for local variables. Maximum is 327680 bytes.
+```
+
+A clean compile proves the code builds for that board target. It proves nothing
+about pin assignments, sensor behaviour, heater switching or timing on the
+physical prototype.
+
+## 4. Fault handling
+
+`loop()` runs in a fixed order: host commands, thermocouple, interlocks,
+sensors, report. `HeaterSafety::service()` is called on **every** pass, so an
+interlock takes effect within one pass of the condition appearing — it does not
+wait for the next host command, which may never come.
+
+| Condition | Controller behaviour |
+|---|---|
+| thermocouple open or out of range | SSR low, `ERR,TC_INVALID_HEATER_OFF`, `T` frame flag `2`, request cleared |
+| E-stop input low for longer than `ESTOP_DEBOUNCE_MS` | latched, SSR low, `ERR,ESTOP_INPUT`; cleared only by `CMD,RESET` with the input released |
+| temperature above `LOCAL_MAX_TEMP_C` | latched, SSR low, `ERR,LOCAL_OVER_TEMP`; re-arms after `LOCAL_OVERTEMP_HYST_C` below the limit |
+| no recognized host frame for `HOST_TIMEOUT_MS` | SSR low, `ERR,HOST_TIMEOUT`, request cleared |
+
+Every trip clears the heater *request* as well as the output, so the heater
+cannot restart by itself: a live host must send a new `SET,HEATER,1`. During a
+running session the host re-asserts its command once a second
+(`timing.keepalive_period_s`), which is also why a busy host never looks like a
+dead one to the watchdog. Unrecognized lines do not refresh the watchdog, so
+line noise cannot keep a dead host looking alive.
+
+## 5. Hardware verification checklist
+
+1. Confirm the exact ESP32 module and its usable GPIOs (GPIO 6–11 belong to
+   flash; input-only pins must not be driven).
+2. Confirm the MAX31856 breakout's logic level, the K-type thermocouple
+   polarity and the connector.
+3. Confirm the TCS3200 output can drive the OUT pin chosen in `PINS.h`.
+4. Confirm the BME688 sits cooler than `enose_max_c` and away from condensation
+   and particulates.
+5. **Determine the SSR type.** Zero-cross SSRs suit this time-proportioning.
+   Random-fire and phase-angle SSRs do not.
+6. Measure the mains voltage, heater current and inrush; size the fuse,
+   wiring and heatsink for them.
+7. Confirm a **hardware** thermal cutoff removes heater power without the
+   ESP32, and test it while the heater is energised.
+8. Confirm the E-stop works with the harness connected and disconnected.
+9. Confirm the host ceiling is respected on the board and that duty never
+   exceeds it.
+10. Confirm fan and drum-motor loads are isolated from the ESP32 supply.
+
+## 6. Known firmware limitations
+
+* Heater feedback is the commanded GPIO level, not a measurement of the load:
+  a stuck SSR is invisible unless an feedback input is wired and
+  `heater.feedback_expected` is enabled.
+* Colour measurement shares the ESP32 with the control loop; the 50 ms
+  integration windows are a compromise and must be checked for repeatability.
+* Second-crack detection is the same threshold logic as first crack in the same
+  burst and cannot be trusted without an audio survey of real roasts.
+* The BME688 reading blocks for roughly 200 ms and is therefore done once per
+  report period, never in the interlock path.
+* No over-the-air update and no on-board logging: sessions live on the host.

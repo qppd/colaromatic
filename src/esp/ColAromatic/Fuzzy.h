@@ -1,0 +1,59 @@
+#pragma once
+
+#include <Arduino.h>
+
+#include "GenFuzzy.h"
+
+/*
+ * FuzzyController — onboard Mamdani inference (REQ-FUZ-001..004).
+ *
+ * A direct port of src/colaromatic/control/fuzzy.py so the machine can run
+ * automatic control with no PC attached, using the SAME generated rule base
+ * (GenFuzzy.h, baked from src/config/controllers/*.json):
+ *
+ *   - piecewise-linear membership with shoulder clamping at the universe edge
+ *   - min implication, max aggregation, centroid defuzzification on a
+ *     discrete output universe of GEN_FUZZY_OUT_RES points
+ *   - rules whose antecedent references a disabled input are skipped
+ *   - missing (NAN) required input -> status missing_input, output 0
+ *   - no rule fired -> configured fallback output (0 %) — never a guess
+ *
+ * The controller never provides safety protection: interlocks and latches in
+ * HeaterSafety remove heater authority independently of any inference result.
+ */
+class FuzzyController {
+ public:
+  enum Status : uint8_t {
+    STATUS_OK = 0,
+    STATUS_MISSING_INPUT = 1,
+    STATUS_NO_RULES_FIRED = 2,
+  };
+
+  struct Result {
+    float output = 0.0f;   // duty %, 0 when not computable
+    uint8_t status = STATUS_MISSING_INPUT;
+    uint8_t fired = 0;     // how many rules fired (diagnostics)
+  };
+
+  FuzzyController();
+
+  /* values: one entry per GEN_FUZZY_INPUT_COUNT (temp_error, ror, ...),
+     NAN marks a missing input. */
+  Result evaluate(const float *values);
+
+  static const char *statusText(uint8_t status) {
+    switch (status) {
+      case STATUS_OK: return "ok";
+      case STATUS_MISSING_INPUT: return "missing_input";
+      default: return "no_rules_fired";
+    }
+  }
+
+ private:
+  static float membership(const GenFuzzyTerm &term, float x);
+  static float clampTo(float value, float lo, float hi) {
+    return value < lo ? lo : (value > hi ? hi : value);
+  }
+
+  float _universe[GEN_FUZZY_OUT_RES];
+};
