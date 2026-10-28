@@ -3,9 +3,9 @@
 #include <Arduino.h>
 
 #include "CONF.h"
-#include "Fuzzy.h"
 #include "GenProfiles.h"
 #include "LinkFrames.h"
+#include "Pid.h"
 
 /*
  * RoastControl — the onboard roast session (no PC in the loop).
@@ -14,8 +14,12 @@
  * onto the machine controller, so the roaster behaves the same way when it is
  * driven only from the HMI touch panel over ESP-NOW:
  *
- *   - states: IDLE -> RUNNING (manual duty or automatic fuzzy control)
+ *   - states: IDLE -> RUNNING (manual duty or automatic control)
  *             -> COOLING -> DONE, with HOLD as a duty-zero flag inside RUNNING
+ *   - automatic control is two loops in series: a fuzzy stage maps the colour
+ *     error to a temperature setpoint (ColorSetpoint), and a PID maps that
+ *     setpoint to heater duty (Pid). If the colour reading is unusable the
+ *     setpoint falls back to the profile trajectory / operator setpoint.
  *   - temperature processing: EMA filter and regression Rate of Rise over the
  *     configured window, with the same staleness rule as the host
  *   - stage detection: turning point from the temperature minimum rebound,
@@ -41,6 +45,7 @@ class RoastControl {
     float tempC = NAN;       // raw probe reading, NAN when invalid
     uint8_t tempFlag = 2;    // 0 ok, 1 degraded, 2 invalid
     float gasOhm = NAN;
+    float colorRatio = NAN;  // uncalibrated browning ratio, NAN when unusable
     bool enoseHot = false;   // warning: BME688 above its limit
   };
 
@@ -90,7 +95,11 @@ class RoastControl {
   bool holdActive() const { return _hold; }
   float dutyCmd() const { return _dutyCmd; }
   float dutyApplied() const { return _dutyApp; }
-  float setpointC() const { return _setpointC; }
+  /* The target the controller is actually using: the colour-derived setpoint
+     in automatic mode, otherwise the operator setpoint. */
+  float setpointC() const { return isnan(_targetC) ? _setpointC : _targetC; }
+  bool colorTargetActive() const { return _colorTarget; }
+  float colorError() const { return _colorError; }  // target - measured ratio
   float filteredTempC() const { return _filtC; }
   float rorCpm() const { return _rorValid ? _ror : NAN; }
   uint8_t tempQuality() const { return _quality; }
@@ -105,7 +114,7 @@ class RoastControl {
   static void copyText(char *dst, size_t n, const char *src);
 
   void onSensorTick(const Sample &sample);
-  void onControlTick(const Sample &sample);
+  void onControlTick(const Sample &sample, float dtS);
   void advanceStage(uint8_t stage, uint8_t method, bool estimated,
                     float confidence, bool requiresConfirmation,
                     uint32_t nowMs, const char *text, bool confirmed);
@@ -138,6 +147,9 @@ class RoastControl {
   /* operator inputs */
   float _manualDuty = 0.0f;
   float _setpointC = NAN;
+  float _targetC = NAN;        // active target; NAN = fall back to _setpointC
+  float _colorError = NAN;     // target ratio - measured ratio
+  bool _colorTarget = false;   // the fuzzy colour loop supplied _targetC
   float _dutyCeiling = GEN_DUTY_CEILING_PCT;
   float _profileMaxDuty = NAN;
 
@@ -175,5 +187,5 @@ class RoastControl {
   int _evHead = 0;
   int _evCount = 0;
 
-  FuzzyController _fuzzy;
+  Pid _pid;
 };

@@ -34,12 +34,12 @@ verification column below.
 | 1 | ESP32 development board | main controller | exact module, flash/RAM, free GPIOs, USB chip, logic level, whether a second UART/SPI is needed for the HMI | UNVERIFIED |
 | 2 | TCS3200 colour sensor | RGB / light-to-frequency | module vs bare chip (OUT drive capability), lens, illumination, mounting, distance, shielding | UNVERIFIED |
 | 3 | K-type thermocouple | temperature | probe diameter/length, sheath material, grounded/ungrounded junction, response time, max temperature, connector type | UNVERIFIED |
-| 4 | MAX31856 or equivalent interface | thermocouple front end | whether one is actually in the quotation, board logic level (3.3 V safe?), cold-junction behaviour | UNVERIFIED — **conditional requirement** |
-| 5 | Solid-state relays, 2 units | heater switching | **zero-cross or random-fire?** input voltage, load rating, required heatsink, leakage current | UNVERIFIED — determines legality of time-proportioning |
+| 4 | MAX6675 (or equivalent) interface | thermocouple front end | whether one is actually in the quotation, board logic level (**many MAX6675 breakouts are 5 V — level-shift SO/SCK/CS for the ESP32**), cold-junction behaviour, accuracy over the roast range | UNVERIFIED — **conditional requirement** |
+| 5 | Solid-state relays, at least 2 units (heater + fan; add a second heater channel if used) | heater and fan switching | **zero-cross or random-fire?** input voltage, load rating, required heatsink, leakage current; the fan SSR is switched on/off only | UNVERIFIED — determines legality of time-proportioning |
 | 6 | Stainless-steel heating elements, 3 units | heating | voltage, wattage, AC/DC, resistance, inrush, whether they can be paralleled, total load | UNVERIFIED — **critical** |
 | 7 | Stainless-steel coffee roaster assembly | drum/bean chamber | drum vs fluid-bed, motor type/existing drive, probe ports, seals | UNVERIFIED |
 | 8 | BME688 sensor | gas/VOC response | breakout board, I²C address, whether it can be placed outside the hot zone | UNVERIFIED |
-| 9 | Exhaust fan | exhaust | voltage, current, AC/DC, PWM or voltage control, static pressure | UNVERIFIED |
+| 9 | Exhaust fan | exhaust | voltage, current, AC/DC, on/off or variable-speed control, static pressure | UNVERIFIED |
 | 10 | Convection fan | airflow | same as above, plus maximum temperature at the impeller | UNVERIFIED |
 | 11 | 5-inch HMI touchscreen | operator interface | **model, protocol, OS, whether it runs a browser** | UNVERIFIED — blocks GUI deployment decision |
 | 12 | Wiring, connectors, fuses, enclosure | electrical assembly | conductor gauge for the measured current, temperature ratings, enclosure class, strain relief, grounding | UNVERIFIED |
@@ -75,8 +75,9 @@ Answer these with a multimeter and the element nameplates, not from memory:
    inrush**, at the ambient temperature inside the enclosure (derate!).
 5. Is the SSR zero-cross (usable with slow time-proportioning) or random-fire
    (needs phase-angle control, which this software does not implement)?
-6. Are the two SSRs independent circuits or a redundant pair? The firmware
-   currently switches both from one command.
+6. Are the heater SSRs independent circuits or a redundant pair? The firmware
+   switches both heater channels from one command. Is the fan on its own SSR,
+   and is that SSR rated for the fan's inrush?
 7. What fuse/breaker rating and type protects the heater circuit, and is it on
    the line side?
 8. Is there a **hardware** thermal cutoff (thermal fuse or thermostat) that
@@ -99,7 +100,7 @@ and bean temperature. Decide and document:
 |---|---|---|---|
 | Probe in the drum air / chamber | environment temperature | fast | turning point and chamber control; not bean temperature |
 | Probe touching the bean mass (through the drum wall or a poppet) | bean temperature | slow, noisy when the drum turns | needed for meaningful "bean temp" claims |
-| Both probes | both | — | preferred for research; costs one more MAX31856 channel/board |
+| Both probes | both | — | preferred for research; costs one more MAX6675 channel/board |
 
 If both are installed, the host must be told which probe feeds the RoR control
 input. Today the engine consumes a single temperature channel
@@ -121,7 +122,7 @@ The **engineering** of that optical fixture is not solved by this repository.
 
 | Item | Why it is needed | Blocking? |
 |---|---|---|
-| MAX31856 breakout (or equivalent) and thermocouple connector | without a cold-junction-compensated front end the temperature channel is unusable | yes, for any roast |
+| MAX6675 breakout (or equivalent) and thermocouple connector | without a cold-junction-compensated front end the temperature channel is unusable; check its logic level (many are 5 V) | yes, for any roast |
 | Reference thermometer (or calibrated thermocouple meter) | to verify the thermocouple against a known standard | yes, for REQ-TEMP-005 |
 | Colour reference target (a documented set of patches with measured XYZ) | to produce a real colour calibration | yes, for any L*a*b* claim |
 | Independent thermal cutoff / thermostat + enclosure hardware | REQ-SAFE-001 | yes, before energising |
@@ -132,7 +133,7 @@ The **engineering** of that optical fixture is not solved by this repository.
 | Sampling arrangement for the BME688 (tube + cooling/dilution) | keep the sensor below 80 °C and dry | yes, for e-nose data |
 | Microphone/envelope module + mounting | if acoustic crack detection is to be evaluated | no (operator confirmation works without it) |
 | Drum motor drive / controller | if the roaster assembly does not include one | unknown |
-| Spare TCS3200 and MAX31856 modules | sensor damage during commissioning | recommended |
+| Spare TCS3200 and MAX6675 modules | sensor damage during commissioning | recommended |
 
 ## 7. Compatibility checks that already have an answer in software
 
@@ -142,6 +143,7 @@ The **engineering** of that optical fixture is not solved by this repository.
 | Can the control loop run without the GUI? | Yes: headless engine, API optional. | `src/tools/run_simulation.py` |
 | Is a separate computer needed for "advanced image processing"? | Not for the current pipeline: colour is a 4-channel transform plus a 3×4 least-squares matrix fit. A colour reference fitting step runs in milliseconds. | `processing/color.py` |
 | Does the heater need PWM? | No: on/off time-proportioning with a 10 s window is used, which is what zero-cross SSRs require. | `control/heater.py` |
+| Does the fan need PWM? | No: it has its own SSR and is switched on/off. Any non-zero fan command runs it at full speed. | `HeaterSafety.cpp` |
 | Can the ESP32 and the HMI share the UART? | Unresolved — verify the HMI's interface before assigning pins. | `docs/04_wiring_and_pinmap.md` |
 
 ## 8. Recommended next actions (hardware, in order)

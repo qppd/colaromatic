@@ -18,7 +18,7 @@ to confirm the diagnosis. Safety-relevant entries are marked **SAFETY**.
 
 | Symptom | Likely cause | Immediate action | Confirmation |
 |---|---|---|---|
-| Temperature `missing`, or `start refused: no valid temperature reading` | probe disconnected, broken thermocouple, wrong CS pin, MAX31856 not detected | check the connector and polarity; check wiring and the CS pin | live tile shows a plausible ambient value; firmware prints `T` frames with flag `0` |
+| Temperature `missing`, or `start refused: no valid temperature reading` | probe disconnected, broken thermocouple, wrong CS pin, MAX6675 unpowered or not detected | check the connector and polarity; check SCK/SO/CS wiring and the module supply | live tile shows a plausible ambient value; firmware prints `T` frames with flag `0` |
 | Temperature `invalid` repeatedly with a plausible value shown | reading outside `min_valid_c…max_valid_c`, or an implausible rate (a jump > 60 °C/s) | inspect the probe for intermittent contact and the connector for corrosion | notes name the exact rejection reason |
 | Temperature goes `stale` during a roast | no frames for `stale_after_s` (3 s) | check the serial cable, USB hub, port power; controller may have reset | firmware banner reappears in the serial monitor |
 | RoR shows `insufficient history` at the start | fewer than 3 samples, or a span under 10 s | wait ~10 s; nothing else needed | RoR appears after the window fills |
@@ -40,7 +40,8 @@ to confirm the diagnosis. Safety-relevant entries are marked **SAFETY**.
 | Duty oscillates rapidly | control period too short for the plant, or min on/off too small | lengthen `control_period_s`, or increase `min_on_ms` | measured relay on-time trace |
 | Relay does not follow the command | SSR wiring, drive level, wrong SSR type, or a stuck contact | **SAFETY** remove mains and inspect; verify with a lamp load | commanded vs feedback (if wired) or a scope on the SSR input |
 | `HEATER_FEEDBACK_MISMATCH` | the feedback line and command disagree | **SAFETY** stop the roast, remove mains, inspect the SSR | fault clears only when they agree |
-| Fan does not run during cooling | wiring, supply, wrong control type (voltage-controlled fan) | **SAFETY** stop and inspect; do not leave a hot batch | air movement at the exhaust; falling temperature |
+| Fan does not run during cooling | fan SSR wiring or drive, fan supply, or a stuck SSR | **SAFETY** stop and inspect; do not leave a hot batch | air movement at the exhaust; falling temperature |
+| Fan runs but speed cannot be varied | expected: the fan SSR is on/off, so any non-zero command is full speed | none — use the on/off command, or replace the hardware with a variable-speed drive | `H` frame fan field is `0` or `100` |
 | `cooling ended without a verified temperature` | temperature invalid during cooling | inspect the probe; treat the batch as hot | the summary warning disappears once the probe is fixed |
 
 ## 4. Safety faults
@@ -77,8 +78,8 @@ faults keep it off until they are acknowledged **and** the batch is cool.
 | Symptom | Likely cause | Immediate action | Confirmation |
 |---|---|---|---|
 | `HOST_TIMEOUT` repeatedly | host not running, or serial writes failing | check the host log and the port | no `HOST_TIMEOUT` while the host is running |
-| `TC_INIT_FAIL` | SPI wiring, CS pin, MAX31856 not seated | recheck wiring against the verified pin map | no fault on boot |
-| `TC_OPEN` / `TC_FAULT` | broken thermocouple wire, loose connector, wrong thermocouple type | stop the roast; the firmware drops the heater as soon as the probe fails | `T` frames carry flag `2` and an empty value |
+| `TC_OPEN` immediately at boot | MAX6675 unpowered, SCK/SO/CS miswired, or a 5 V module without level shifting | recheck wiring against the verified pin map and the module's logic level | no fault on boot, `T` frames flag `0` |
+| `TC_OPEN` / `TC_FAULT` | broken thermocouple wire, loose connector, non-K thermocouple, or a reading outside the valid range | stop the roast; the firmware drops the heater as soon as the probe fails | `T` frames carry flag `2` and an empty value |
 | `TC_INVALID_HEATER_OFF` | the heater trip caused by the fault above | fix the probe, then let the host issue a new command; the controller does not resume on its own | heater stays off while the probe is invalid |
 | `BME_INIT_FAIL` | I²C address, pull-ups, sensor damaged | try the other address; scan the bus | `E` frames with flag `0` |
 | `BME_READ_FAIL` | transient I²C failure | check the bus length and pull-ups | `E` frames return to flag `0` or `1` |

@@ -46,7 +46,7 @@ No requirement is marked validated on the basis of a plausible-looking number.
 
 | ID | Requirement | Source | Module | Hardware dependency | Test | Acceptance criterion | Status |
 |---|---|---|---|---|---|---|---|
-| REQ-TEMP-001 | Timestamped temperature with trend, filter and status | §8 | `processing/temperature.py` | K-type + MAX31856 | `test_temperature.py` | Result carries timestamp, raw, filtered, status | VERIFIED-SW |
+| REQ-TEMP-001 | Timestamped temperature with trend, filter and status | §8 | `processing/temperature.py` | K-type + MAX6675 | `test_temperature.py` | Result carries timestamp, raw, filtered, status | VERIFIED-SW |
 | REQ-TEMP-002 | RoR uses actual elapsed time | §8.1 | `processing/temperature.py` | none | `test_temperature.py::test_ror_uses_actual_timestamps_not_assumed_interval` | RoR correct for irregular sampling | VERIFIED-SW |
 | REQ-TEMP-003 | Missing, duplicate, invalid, stale and noisy readings handled | §8.1 | `processing/temperature.py`, `control/safety.py` | none | `test_temperature.py`, `test_heater_safety.py` | Each condition produces a defined status/fault | VERIFIED-SW |
 | REQ-TEMP-004 | Probe arrangement (drum vs bean) decided and documented | §8.2 | — | probe location | procedure in `docs/03...` §4 | Documented decision with evidence | PENDING-HW |
@@ -146,7 +146,7 @@ No requirement is marked validated on the basis of a plausible-looking number.
 2. HMI model and protocol — browser HMI assumed; see `docs/03...` §2.
 3. SSR type (zero-cross vs random-fire) — determines whether time-proportioning is legal.
 4. Heater voltage/current per element and the resulting protection sizing.
-5. Whether one or two SSR circuits are actually used, and whether they are independent.
+5. How many heater SSR circuits are actually used, whether they are independent, and confirmation that the fan has its own SSR (on/off only).
 6. Probe arrangement: drum/environment temperature vs bean temperature.
 7. BME688 sampling arrangement (headspace vs exhaust vs diluted sample).
 8. Whether an acoustic channel is available for crack detection.

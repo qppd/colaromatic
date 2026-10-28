@@ -3,6 +3,8 @@
 #include <math.h>
 #include <string.h>
 
+#include "ColorSetpoint.h"
+
 /* ------------------------------------------------------------------ text */
 
 void RoastControl::copyText(char *dst, size_t n, const char *src) {
@@ -31,6 +33,9 @@ void RoastControl::begin() {
   _endStatus = 0;
   _manualDuty = 0.0f;
   _setpointC = NAN;
+  _targetC = NAN;
+  _colorError = NAN;
+  _colorTarget = false;
   _dutyCeiling = GEN_DUTY_CEILING_PCT;
   _profileMaxDuty = NAN;
   _filtC = NAN;
@@ -56,6 +61,7 @@ void RoastControl::begin() {
   _lastControlMs = 0;
   _evHead = 0;
   _evCount = 0;
+  _pid.begin(PID_KP, PID_KI, PID_KD, 0.0f, GEN_DUTY_CEILING_PCT);
 }
 
 void RoastControl::service(const Sample &sample) {
@@ -107,8 +113,9 @@ void RoastControl::service(const Sample &sample) {
 
   if (!_hold && (sample.nowMs - _lastControlMs >= GEN_CONTROL_PERIOD_MS ||
                  _lastControlMs == 0)) {
+    const float dtS = (float)(sample.nowMs - _lastControlMs) / 1000.0f;
     _lastControlMs = sample.nowMs;
-    onControlTick(sample);
+    onControlTick(sample, dtS);
   }
 }
 
@@ -324,27 +331,40 @@ void RoastControl::onSensorTick(const Sample &sample) {
   }
 }
 
-void RoastControl::onControlTick(const Sample &sample) {
-  (void)sample;
+void RoastControl::onControlTick(const Sample &sample, float dtS) {
   float duty = 0.0f;
 
   if (_mode == MODE_AUTO) {
     const float elapsedS = (float)(_nowMs - _sessionStartMs) / 1000.0f;
-    const float target = targetAt(elapsedS);
-    float values[GEN_FUZZY_INPUT_COUNT];
-    for (int i = 0; i < GEN_FUZZY_INPUT_COUNT; i++) {
-      const char *id = GEN_FUZZY_INPUTS[i].id;
-      if (strcmp(id, "temp_error_c") == 0) {
-        values[i] = (isnan(target) || isnan(_filtC)) ? NAN : (target - _filtC);
-      } else if (strcmp(id, "ror_c_per_min") == 0) {
-        values[i] = _rorValid ? _ror : NAN;
-      } else {
-        values[i] = NAN;  // any other enabled input is not sensed onboard
+
+    /* Outer loop: the colour error picks the temperature target. The profile
+       trajectory / operator setpoint is only the fallback, used whenever the
+       colour reading is not usable (no light, saturated, sensor unplugged). */
+    float target = targetAt(elapsedS);
+    _colorTarget = false;
+    if (!isnan(sample.colorRatio)) {
+      _colorError = COLOR_TARGET_RATIO - sample.colorRatio;
+      const float colorTarget = ColorSetpoint::setpointC(_colorError);
+      if (!isnan(colorTarget)) {
+        target = colorTarget;
+        _colorTarget = true;
       }
+    } else {
+      _colorError = NAN;
     }
-    const FuzzyController::Result result = _fuzzy.evaluate(values);
-    duty = result.output;  // 0 for missing input or no rule fired (engine: `or 0.0`)
+    _targetC = target;
+
+    /* Inner loop: PID on the temperature error. Missing temperature returns 0
+       (heater off); HeaterSafety cuts the output independently anyway. */
+    _pid.setLimits(0.0f, dutyCeiling());
+    duty = _pid.compute(target, _filtC, dtS);
   } else {
+    /* Manual duty: no setpoint, no PID state carried into a later automatic
+       session. */
+    _targetC = NAN;
+    _colorTarget = false;
+    _colorError = NAN;
+    _pid.reset(_filtC);
     duty = _manualDuty;
   }
 
@@ -369,6 +389,10 @@ void RoastControl::beginCooling(uint32_t nowMs, const char *reason,
   _endpointPending = false;
   _dutyCmd = 0.0f;
   _dutyApp = 0.0f;
+  _targetC = NAN;
+  _colorTarget = false;
+  _colorError = NAN;
+  _pid.reset(_filtC);
   copyText(_endReason, sizeof(_endReason), reason);
   /* status: complete | stopped | aborted_safety | aborted_estop */
   _endStatus = 0;
@@ -452,6 +476,10 @@ uint8_t RoastControl::start(uint8_t profileIdx, int16_t setpoint10,
   _dutyApp = 0.0f;
   _lastLoggedDuty = -1000.0f;
   _dutyCeiling = GEN_DUTY_CEILING_PCT;
+  _targetC = NAN;
+  _colorTarget = false;
+  _colorError = NAN;
+  _pid.reset(_filtC);
   if (!isnan(p.maxDutyPct) && p.maxDutyPct < _dutyCeiling) {
     _dutyCeiling = p.maxDutyPct;
   }
@@ -482,16 +510,17 @@ uint8_t RoastControl::resume(const char *&text) {
   }
   _hold = false;
   _lastControlMs = _nowMs;  // recompute duty on the next pass
+  _pid.reset(_filtC);       // do not carry the pre-hold integral across
   text = "OK";
   return ACK_OK;
 }
 
-uint8_t RoastControl::cool(const char *&text) {
+uint8_t RoastControl::cool(const char *&text, const char *status) {
   if (_state != ROAST_RUNNING && _state != ROAST_HOLD) {
     text = "NO_ACTIVE_SESSION";
     return ACK_STATE;
   }
-  beginCooling(_nowMs, "operator_stop", "stopped");
+  beginCooling(_nowMs, "operator_stop", status ? status : "stopped");
   text = "OK";
   return ACK_OK;
 }
@@ -531,6 +560,7 @@ uint8_t RoastControl::setMode(uint8_t mode, const char *&text) {
     return ACK_STATE;
   }
   _mode = mode;
+  _pid.reset(_filtC);  // a mode change starts from a clean controller state
   text = "OK";
   return ACK_OK;
 }

@@ -14,10 +14,9 @@ and must be updated in the same change.
 
 | ESP32 GPIO | Signal | Direction | Notes / risk |
 |---|---|---|---|
-| 18 | MAX31856 SCK | out | SPI clock |
-| 19 | MAX31856 MISO | in | SPI data in |
-| 23 | MAX31856 MOSI | out | SPI data out |
-| 5 | MAX31856 CS | out | chip select |
+| 18 | MAX6675 SCK | out | SPI clock |
+| 19 | MAX6675 SO | in | module data out (MISO). **Many MAX6675 breakouts are 5 V — level-shift this line** |
+| 5 | MAX6675 CS | out | chip select, active low. GPIO 5 is a strapping pin, but its boot state (HIGH) is also the CS idle state |
 | 21 | BME688 SDA | bidir | I²C, needs pull-ups (usually on the breakout) |
 | 22 | BME688 SCL | out | I²C clock |
 | 32 | TCS3200 S0 | out | frequency scaling select |
@@ -26,9 +25,10 @@ and must be updated in the same change.
 | 14 | TCS3200 S3 | out | filter select |
 | 34 | TCS3200 OUT | in | **input-only pin**, no internal pull-up; verify the module can drive it |
 | 25 | TCS3200 LED | out | reserved; illumination control is external |
-| 26 | SSR 1 command | out | through an opto-isolated input / driver, never directly |
-| 13 | SSR 2 command | out | same |
-| 4 | Fan PWM | out | 25 kHz LEDC; check the fan's control input type |
+| 26 | Heater SSR 1 | out | through an opto-isolated input / driver, never directly |
+| 13 | Heater SSR 2 | out | optional second heater channel, same command |
+| 23 | Fan SSR | out | on/off only, through an opto-isolated input / driver; **no PWM**. Free because the MAX6675 has no MOSI; not a strapping pin or an ADC2 pin |
+| 4 | — | — | **free; strapping pin** — do not use for an output that could hold it during boot |
 | 16 | E-stop input | in | active low, **internal pull-up enabled**; dry contact to GND. GPIO 35 was rejected: input-only pins have no internal pull-up, so `INPUT_PULLUP` there would silently do nothing and leave the input floating |
 | 36 | Audio envelope | in | ADC1 channel 0 only (ADC2 is unusable with Wi-Fi on) |
 | 2 | Status LED | out | boot strapping pin: verify it does not fight the boot mode |
@@ -36,7 +36,9 @@ and must be updated in the same change.
 **Unresolved conflicts to check before assembly**
 
 * GPIO 6–11 are used by the on-board flash on most modules — never use them.
-* GPIO 0/2/12/15 are strapping pins; an external driver on them can prevent boot.
+* GPIO 0/2/4/5/12/15 are strapping pins; an external driver on them can prevent
+  boot. GPIO 5 is used for the MAX6675 CS, whose idle-high state matches the
+  GPIO 5 boot requirement; GPIO 4 is deliberately left unused.
 * GPIO 34–39 are input-only and have **no** internal pull-up — never use one
   for the E-stop, which is why the E-stop sits on GPIO 16.
 * If a NEXTION/RS-485/serial HMI is used, it will consume the UART pins (1/3 or
@@ -49,20 +51,21 @@ and must be updated in the same change.
 ```
            +5 V ──┬───────────────┬───────────────┬────────────────┐
                   │               │               │                │
-              ESP32 dev       5 V fans        HMI supply     SSR drive
+              ESP32 dev       fan supply      HMI supply     SSR drive
                   │               │               │            (opto)
     ┌─────────────┼───────────────┴───────────────┘                │
     │             │                                                │
  SPI│        I²C │                                TTL direction     │
  ┌──▼──────┐ ┌───▼────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐ │
- │MAX31856 │ │ BME688 │  │ TCS3200   │  │ E-stop   │  │ audio    │ │
+ │MAX6675  │ │ BME688 │  │ TCS3200   │  │ E-stop   │  │ audio    │ │
  │ + K-TC  │ │        │  │ + lamp    │  │ switch   │  │ envelope │ │
  └─────────┘ └────────┘  └───────────┘  └──────────┘  └──────────┘ │
                                                                     │
         ── SEPARATE, ISOLATED, MAINS-SIDE CIRCUIT (review required) ──▼──────
-        L ──[ fuse / breaker ]──[ hardware thermal cutoff ]──┬── SSR 1 ── heater 1 ──┐
-                                                             ├── SSR 1/2 ─ heater 2 ─┤
-                                                             └── SSR 2 ── heater 3 ─┤
+        L ──[ fuse / breaker ]──[ hardware thermal cutoff ]──┬── SSR H1 ── heater 1 ──┐
+                                                             ├── SSR H1/H2 ─ heater 2 ─┤
+                                                             ├── SSR H2 ── heater 3 ─┤
+                                                             └── SSR F ─── fan ──────┤
                                                                                    N ─┘
         earth bonding of the drum, enclosure, element bodies, and any exposed metal
 ```
@@ -71,22 +74,29 @@ Everything above the dashed line is low voltage. Everything below it is the
 hazardous side and depends entirely on the real element ratings measured in
 §3 of document 03.
 
+The heater and the fan have separate SSRs. The heater channels are driven by
+time-proportioning; the fan SSR is switched on/off only (no PWM) and must be
+rated for the fan motor's inrush current. The H1/H2 split above is one possible
+arrangement: the firmware supports one heater SSR or two driven together.
+Confirm the actual element and SSR count before wiring.
+
 ## 3. Power and protection checklist (all items are PENDING-HW)
 
 | # | Requirement | Evidence to capture |
 |---|---|---|
 | 1 | Fuse or breaker rated for the measured total heater current, on the line side | rating, type, photo |
 | 2 | Hardware thermal cutoff (thermal fuse or thermostat) in series with the heater, independent of the ESP32 | part number, trip temperature, bench test with the controller powered **off** |
-| 3 | SSR load rating derated for enclosure ambient and inrush | datasheet figures + measured current |
+| 3 | SSR load rating derated for enclosure ambient and inrush (heater **and** fan SSR) | datasheet figures + measured current |
 | 4 | SSR heatsink with the correct mounting torque and interface material | photo + thermal measurement after 10 min at full duty |
-| 5 | Opto-isolation or driver stage between ESP32 and SSR input | schematic + scope capture of the gate signal |
+| 5 | Opto-isolation or driver stage between ESP32 and each SSR input | schematic + scope capture of the gate signal |
 | 6 | Correct conductor cross-section and high-temperature insulation inside the hot zone | gauge, insulation rating |
 | 7 | Earth continuity from the mains plug to every exposed metal part | measured resistance |
 | 8 | Enclosure, grommets and strain relief on every cable entry | photo |
-| 9 | Fan and motor supplied independently of the ESP32 rails | schematic |
+| 9 | Fan supplied independently of the ESP32 rails and isolated from the heater circuit | schematic |
 | 10 | Startup and shutdown sequences: heater off at start, heater off on stop/estop/fault, cooling continues | log excerpt from a real test |
 | 11 | Mains isolation switch that is reachable while the roaster is running | photo |
 | 12 | Emergency stop cuts heater power by a **hardware** path, not only via software | bench test with the controller disconnected |
+| 13 | Pull-down on each SSR input so the heater and fan stay off while the ESP32 boots or resets | schematic + boot test with a lamp load |
 
 ## 4. What the software does and does not do about all this
 
@@ -107,8 +117,9 @@ hazardous side and depends entirely on the real element ratings measured in
    colour sensor against a grey card, BME688 in still air.
 3. Verify the E-stop input and the host watchdog by pulling the USB cable while
    the heater outputs are connected to LEDs instead of SSRs.
-4. Connect the SSRs with the heater **disconnected**; verify switching with a
-   lamp load and confirm the commanded duty on a scope.
+4. Connect the heater and fan SSRs with the loads **disconnected**; verify
+   switching with a lamp load and confirm the commanded heater duty on a scope.
+   Confirm the fan SSR is on for any non-zero fan command and off at zero.
 5. Connect one heating element and confirm the measured current matches the
    nameplate calculation, with the thermal cutoff temporarily set low to prove
    it trips.

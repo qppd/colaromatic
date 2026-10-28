@@ -13,12 +13,14 @@
  *   GenConfig.h       GENERATED from src/config/system.json         (do not edit)
  *   GenFuzzy.h        GENERATED from src/config/controllers/*.json  (do not edit)
  *   GenProfiles.h     GENERATED from src/config/profiles/*.json     (do not edit)
- *   HeaterSafety.*    SSR/fan outputs, E-stop, both link watchdogs, latches
+ *   HeaterSafety.*    heater/fan SSR outputs, E-stop, both link watchdogs, latches
  *   RoastControl.*    session states, RoR, stages, endpoint, duty shaping
- *   Fuzzy.*           Mamdani inference (same rules as the host tooling)
+ *   Fuzzy.*           Mamdani inference (same algorithm as the host tooling)
+ *   ColorSetpoint.*   fuzzy colour error -> temperature setpoint (outer loop)
+ *   Pid.*             PID temperature -> heater duty (inner loop)
  *   HmiLink.*         ESP-NOW link to the touch panel (LinkFrames.h)
  *   HostLink.*        the ASCII serial protocol (docs/05_serial_protocol.md)
- *   ThermocoupleSensor.*  MAX31856 K-type probe
+ *   ThermocoupleSensor.*  MAX6675 K-type probe
  *   ColorSensor.*     TCS3200 light-to-frequency
  *   EnoseSensor.*     BME688 gas sensor
  *   AcousticSensor.*  envelope microphone / crack detection
@@ -32,8 +34,10 @@
  *    from BOTH links removes heater power within one pass.
  *  - A trip clears the duty request as well as the output, so recovery needs
  *    a fresh command from a live operator (and latches need a cool reset).
- *  - SSR switching is on/off time-proportioning computed HERE, phase-aligned
- *    to millis(). Phase-angle or random-fire SSRs must NOT be driven this way.
+ *  - Heater and fan each have their own SSR. The heater uses on/off
+ *    time-proportioning computed HERE, phase-aligned to millis(). The fan SSR
+ *    is on/off only: no PWM, so any non-zero fan request runs it at full
+ *    speed. Phase-angle or random-fire SSRs must NOT be driven this way.
  *  - Every threshold is provisional and REQUIRES_CALIBRATION; treat a serial
  *    monitor session with no mains connected as the only safe first test.
  */
@@ -50,6 +54,7 @@
 #include "HostLink.h"
 #include "HmiLink.h"
 #include "RoastControl.h"
+#include "ColorSetpoint.h"
 
 HeaterSafety heaterSafety;
 HostLink hostLink;
@@ -189,7 +194,7 @@ void dispatchHmi(const HmiLink::Command &hc, uint32_t now) {
       result = roast.resume(text);
       break;
     case OP_COOL:
-      result = roast.cool(text);
+      result = roast.cool(text, "stopped");
       break;
 
     case OP_ESTOP:
@@ -415,6 +420,8 @@ void loop() {
   sample.tempC = thermocouple.temperatureC();
   sample.tempFlag = thermocouple.flag();
   sample.gasOhm = enoseSensor.gasOhm();
+  sample.colorRatio = ColorSetpoint::browningRatio(
+      colorSensor.redHz(), colorSensor.greenHz(), colorSensor.blueHz());
   const float enoseTemp = enoseSensor.sensorTempC();
   sample.enoseHot = !isnan(enoseTemp) && enoseTemp > GEN_ENOSE_MAX_C;
   roast.service(sample);

@@ -81,7 +81,7 @@ struct __attribute__((packed)) LinkState {
   uint8_t stageConfirmed;  // 1 = operator confirmed, 0 = estimated
   uint8_t dutyCmd;         // requested duty %
   uint8_t dutyApp;         // applied (shaped) duty %
-  uint8_t fanPct;
+  uint8_t fanPct;          // fan output: 0 = off, 100 = on (SSR, no PWM)
   uint8_t relayOn;         // 1 = SSR pin currently high
   uint8_t profileIdx;      // selected profile (0xFF = none)
   uint8_t endpointPending; // 1 = controller waits for operator confirmation
@@ -114,7 +114,7 @@ enum LinkOpcode : uint8_t {
   OP_CONFIRM_STAGE = 10,  // a = LinkStage to confirm forward
   OP_CONFIRM_ENDPOINT = 11, // operator accepts a pending endpoint -> cooling
   OP_SET_SETPOINT = 12,   // b = manual/auto setpoint degC * 10
-  OP_SET_FAN = 13,        // a = fan % (manual ventilation)
+  OP_SET_FAN = 13,        // a = fan % (0 = off, non-zero = on; SSR, no PWM)
   OP_PAIR = 14,           // force pairing mode (a = magic 0x5A)
 };
 

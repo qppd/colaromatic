@@ -13,12 +13,12 @@
 
 | Frame | Fields | Notes |
 |---|---|---|
-| `T,<ms>,<temp_c>,<flag>` | thermocouple temperature | `flag`: `0` ok, `1` degraded, `2` invalid. `<temp_c>` is empty when invalid. |
+| `T,<ms>,<temp_c>,<flag>` | thermocouple temperature | `flag`: `0` ok, `1` degraded (reserved; the MAX6675 cannot report it), `2` invalid. `<temp_c>` is empty when invalid. |
 | `C,<ms>,<r_hz>,<g_hz>,<b_hz>,<clear_hz>,<flag>` | TCS3200 light-to-frequency | channel order is red, green, blue, clear; frequencies in Hz |
 | `E,<ms>,<gas_ohm>,<temp_c>,<hum_pct>,<press_hpa>,<flag>,<warmup>` | BME688 | `warmup`: `0`/`1`; `<temp_c>` here is the **sensor** temperature |
-| `H,<ms>,<relay>,<fan>,<estop>,<link>` | actuator and interlock feedback | `relay` is the actual output state, `estop` the firmware latch, `link` the firmware's view of the host link |
+| `H,<ms>,<relay>,<fan>,<estop>,<link>` | actuator and interlock feedback | `relay` is the actual heater output state, `fan` is `0`/`100` (fan SSR is on/off), `estop` the firmware latch, `link` the firmware's view of the host link |
 | `K,<ms>,<kind>,<confidence>` | acoustic event | `kind` = `first_crack` or `second_crack`; `confidence` 0–1 |
-| `ERR,<ms>,<code>[,<detail>]` | controller fault | e.g. `TC_INIT_FAIL`, `TC_OPEN`, `TC_FAULT`, `TC_INVALID_HEATER_OFF`, `BME_INIT_FAIL`, `BME_READ_FAIL`, `ESTOP_ENGAGED`, `ESTOP_INPUT`, `HOST_TIMEOUT`, `LOCAL_OVER_TEMP`, `OVER_TEMP_LATCHED`, `ESTOP_STILL_ACTIVE`, `RESET_OK`, `UNKNOWN_COMMAND` |
+| `ERR,<ms>,<code>[,<detail>]` | controller fault | e.g. `TC_OPEN`, `TC_FAULT`, `TC_INVALID_HEATER_OFF`, `BME_INIT_FAIL`, `BME_READ_FAIL`, `ESTOP_ENGAGED`, `ESTOP_INPUT`, `HOST_TIMEOUT`, `LOCAL_OVER_TEMP`, `OVER_TEMP_LATCHED`, `ESTOP_STILL_ACTIVE`, `RESET_OK`, `UNKNOWN_COMMAND` |
 | `# ...` | human-readable banner | ignored by the host parser |
 
 `<ms>` is the controller's `millis()` and is informational: **the host
@@ -30,7 +30,7 @@ decisions. A drifting device clock therefore cannot make stale data look fresh.
 | Command | Effect | Host method |
 |---|---|---|
 | `SET,HEATER,0|1` | request heater off/on (still subject to every on-board interlock) | `bridge.set_heater(True/False, now)` |
-| `SET,FAN,<0..100>` | fan duty in percent | `bridge.set_fan(pct, now)` |
+| `SET,FAN,<0..100>` | fan request; `0` = off, any non-zero = on (the fan SSR is on/off, no PWM) | `bridge.set_fan(pct, now)` |
 | `CMD,ESTOP` | latch the firmware E-stop and remove heater power | `bridge.emergency_stop()` |
 | `CMD,RESET` | clear the latch; refused while the E-stop input is active or over-temperature is latched | `bridge.clear_controller_faults()` |
 | `SET,AUDIO,<threshold>` | enable crack detection at an ADC peak-to-peak threshold, `0` disables | manual |
@@ -46,7 +46,7 @@ decisions. A drifting device clock therefore cannot make stale data look fresh.
 | No **recognized** host frame for 3 s (`HOST_TIMEOUT_MS`) | heater off, `ERR,HOST_TIMEOUT`, `link=0`, request cleared | — |
 | A line that is not in the command table | `ERR,UNKNOWN_COMMAND`, watchdog **not** refreshed | — |
 | Controller reports `link=0` twice in a row | — | `link_ok()` false → start refused, or a running session aborts to cooling |
-| Thermocouple open / out of range | interlock drops the SSR within one loop pass, `ERR,TC_INVALID_HEATER_OFF`, `T` frame flag `2` | temperature invalid → critical fault → session aborts to cooling |
+| Thermocouple open / out of range (MAX6675 open bit or range check) | interlock drops the heater SSR within one loop pass, `ERR,TC_INVALID_HEATER_OFF`, `T` frame flag `2` | temperature invalid → critical fault → session aborts to cooling |
 | No frame received for 4 s (`link_timeout_s`) | — | `link_ok()` false; start refused; heater authority removed mid-session |
 | No `T` frame for 3 s (`stale_after_s`) | — | temperature marked `invalid` (not frozen at the last value) |
 | Physical E-stop pressed | latches within `ESTOP_DEBOUNCE_MS`, `ERR,ESTOP_INPUT`, SSR off | `H` frame `estop=1` → host latches its own E-stop and aborts the session |

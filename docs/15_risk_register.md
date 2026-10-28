@@ -15,8 +15,9 @@ every phase gate.
 | S5 | Heater current exceeds wiring/SSR rating | 3 | 4 | 12 | measure elements first; size fuse/breaker and heatsink; derate for enclosure ambient | low after measurement | electronics |
 | S6 | BME688 or colour sensor exposed to hot, wet, smoky air | 4 | 2 | 8 | cooled/diluted sampling path; sensor temperature logged with a limit warning; mounting chosen deliberately | low | builder |
 | S7 | E-stop only cuts power through software | 3 | 4 | 12 | hardware E-stop path in series with the heater; test with the controller unpowered | low after wiring | electronics |
-| S8 | Cooling fails (fan dead) with a hot batch | 3 | 3 | 9 | cooling phase keeps ventilation on; `cooling_temperature_verified` warning; operator stays with the machine | medium | operator |
+| S8 | Cooling fails (fan dead) with a hot batch | 3 | 3 | 9 | cooling phase keeps the fan SSR on; `cooling_temperature_verified` warning; operator stays with the machine | medium | operator |
 | S9 | Unattended operation of unvalidated automatic control | 2 | 5 | 10 | approval required with a low duty ceiling; documented as supervised; the GUI states it | low if the procedure is followed | operator |
+| S10 | 5 V MAX6675 module drives the 3.3 V ESP32 SPI input | 3 | 3 | 9 | verify the module's logic level; use a 3.3 V module or level-shift SO/SCK/CS | low after verification | electronics |
 
 ## B. Data and research-integrity risks
 

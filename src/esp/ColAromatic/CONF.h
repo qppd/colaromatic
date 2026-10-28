@@ -49,12 +49,45 @@
 #define ESTOP_DEBOUNCE_MS       20     // contact must be stable this long
 
 /* --- Temperature (REQUIRES_CALIBRATION) -------------------------------- */
-#define SENSOR_MIN_TEMP_C       -20.0f // outside this the reading is invalid
+/* MAX6675 conversion time, datasheet maximum. Reading faster than this only
+   returns the previous conversion, so the interlock cadence must not be
+   shorter. */
+#define MAX6675_CONVERSION_MS   220
+#if TEMP_INTERLOCK_PERIOD_MS < MAX6675_CONVERSION_MS
+#error "TEMP_INTERLOCK_PERIOD_MS must be >= MAX6675_CONVERSION_MS"
+#endif
+
+#define SENSOR_MIN_TEMP_C       0.0f   // MAX6675 saturates at 0 C; it cannot
+                                       // report negative temperatures
 #define SENSOR_MAX_TEMP_C       400.0f // matches host temperature.max_valid_c
 #define LOCAL_MAX_TEMP_C        250.0f // on-board backstop, above the host's
                                        // 240 C limit so the host trips first
 #define LOCAL_OVERTEMP_HYST_C   20.0f  // must fall this far below before the
                                        // backstop re-arms
+
+/* --- Colour -> setpoint outer loop (REQUIRES_CALIBRATION) --------------- */
+/* The colour input is an uncalibrated browning proxy, not a colour
+   measurement: COLOR_TARGET_RATIO must be measured on the real machine
+   against a colour reference target before the automatic target means
+   anything (docs/13_known_limitations.md). */
+#define COLOR_TARGET_RATIO      0.45f  // red/(red+green+blue) at the target roast
+#define COLOR_MIN_SUM_HZ        30.0f  // below this the sensor sees no light
+#define COLOR_SETPOINT_MIN_C    150.0f // fuzzy output universe, °C
+#define COLOR_SETPOINT_MAX_C    230.0f // must stay below LOCAL_MAX_TEMP_C
+
+/* --- PID temperature control (REQUIRES_CALIBRATION) -------------------- */
+/* Parallel form, gains per second:
+     duty% = kp*e + ki*∫e dt - kd*dT/dt,  e = setpoint - filtered temperature
+   Placeholders sized for the 2 s control period and the 30 % commissioning
+   ceiling. ki is small on purpose: the drum has a long lag, and the integral
+   is what overshoots if it is tuned on a cold machine. kd is 0 because the
+   MAX6675 resolves 0.25 °C and a derivative on that quantisation amplifies
+   noise more than it helps; raise it only with a measured noise figure. */
+#define PID_KP                  1.5f  // % per °C
+#define PID_KI                  0.03f // % per (°C·s)
+#define PID_KD                  0.0f  // % per (°C/s)
+#define PID_INTEGRAL_MIN_PCT    (-20.0f) // hard bound on the stored I term
+#define PID_INTEGRAL_MAX_PCT    100.0f
 
 /* --- Acoustic crack detection (disabled until calibrated) -------------- */
 #define AUDIO_ENABLED_DEFAULT   0

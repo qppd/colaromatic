@@ -8,7 +8,7 @@ and communicates with the HMI panel via ESP-NOW.
 
 - **Controller**: ESP32 38-pin dev board
 - **HMI Panel**: ESP32-S3-Touch-LCD-4.3 (touch screen)
-- **Sensors**: MAX31856 (K-type thermocouple), TCS3200 (color), BME688 (gas), envelope microphone
+- **Sensors**: MAX6675 (K-type thermocouple), TCS3200 (color), BME688 (gas), envelope microphone
 
 ## Repository Layout
 
@@ -20,12 +20,12 @@ src/esp/ColAromatic/   Main controller firmware (ESP32 38-pin)
   GenConfig.h          Generated from system config (do not edit)
   GenFuzzy.h           Generated fuzzy rules (do not edit)
   GenProfiles.h        Generated roast profiles (do not edit)
-  HeaterSafety.*       SSR/fan control, E-stop, watchdog, latches
+  HeaterSafety.*       heater/fan SSR outputs, E-stop, watchdog, latches
   RoastControl.*       Session states, RoR, stages, duty shaping
   Fuzzy.*              Mamdani fuzzy inference engine
   HmiLink.*            ESP-NOW link to HMI touch panel
   HostLink.*           USB serial service protocol (bench/debug)
-  ThermocoupleSensor.* MAX31856 K-type probe driver
+  ThermocoupleSensor.* MAX6675 K-type probe driver
   ColorSensor.*        TCS3200 light-to-frequency color sensor
   EnoseSensor.*        BME688 gas sensor
   AcousticSensor.*     Envelope microphone / crack detection
@@ -40,7 +40,7 @@ Open `src/esp/ColAromatic/ColAromatic.ino` in Arduino IDE.
 Select `ESP32 Dev Module` as the board. Install required libraries:
 - `EspNow`
 - `Adafruit_BME688`
-- `MAX31856` (or equivalent)
+- no thermocouple library: the MAX6675 is read directly over SPI
 
 See [docs/17_firmware_build_flash.md](docs/17_firmware_build_flash.md) for details.
 
@@ -50,11 +50,11 @@ All GPIO assignments are in [`src/esp/ColAromatic/PINS.h`](src/esp/ColAromatic/P
 
 | Component | Pins |
 |---|---|
-| MAX31856 (thermocouple) | SCK=18, MISO=19, MOSI=23, CS=5 |
+| MAX6675 (thermocouple) | SCK=18, SO=19, CS=5 |
 | TCS3200 (color sensor) | S0=32, S1=33, S2=27, S3=14, OUT=34, LED=25 |
 | BME688 (gas sensor) | SDA=21, SCL=22 |
-| Heater SSR | CH1=26, CH2=13 |
-| Fan | PWM=4 |
+| Heater SSR | 26, 13 (optional second channel) |
+| Fan SSR | 23 (on/off only, no PWM; GPIO 4 is a strapping pin and stays free) |
 | E-stop | GPIO=16 (active low, internal pull-up) |
 | Status LED | GPIO=2 |
 | Microphone | ADC1_CH0=36 |
@@ -72,7 +72,9 @@ See [docs/05_serial_protocol.md](docs/05_serial_protocol.md) for frame formats.
   A separately wired thermal cutoff is required.
 - Every interlock evaluates on every loop pass: invalid thermocouple, stale
   reading, E-stop, over-temperature, RoR runaway, or link loss removes heater power.
-- SSR switching uses time-proportioning; phase-angle SSRs must NOT be driven this way.
+- The heater and the fan each have their own SSR. Heater duty uses
+  time-proportioning; the fan SSR is on/off only (no PWM), so a non-zero fan
+  command runs at full speed. Phase-angle SSRs must NOT be driven this way.
 
 ## Status
 

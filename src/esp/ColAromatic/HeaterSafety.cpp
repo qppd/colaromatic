@@ -1,26 +1,11 @@
 #include "HeaterSafety.h"
 
-/* The fan is driven by LEDC. Arduino-ESP32 2.x and 3.x differ in that API. */
-static void fanWrite(uint8_t duty) {
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-  ledcWrite(PIN_FAN, duty);
-#else
-  ledcWrite(0, duty);
-#endif
-}
-
 void HeaterSafety::begin() {
-  pinMode(PIN_SSR_1, OUTPUT);
-  pinMode(PIN_SSR_2, OUTPUT);
+  pinMode(PIN_SSR_HEATER, OUTPUT);
+  pinMode(PIN_SSR_HEATER_2, OUTPUT);
   applyOutput(false);
 
-  pinMode(PIN_FAN, OUTPUT);
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-  ledcAttach(PIN_FAN, 25000, 8);
-#else
-  ledcSetup(0, 25000, 8);
-  ledcAttachPin(PIN_FAN, 0);
-#endif
+  pinMode(PIN_SSR_FAN, OUTPUT);
   writeFan(0);
 
   /* GPIO 35 was rejected: input-only pins have no internal pull-up, so
@@ -146,8 +131,11 @@ void HeaterSafety::setHeaterRequest(bool on) {
 }
 
 void HeaterSafety::setFan(uint8_t percent) {
-  _fanPct = percent;
-  writeFan(percent);
+  /* The fan is switched by its own SSR: on/off only, no PWM. Any non-zero
+     request runs it at full speed; the stored value is the effective output
+     so telemetry cannot claim a fan speed the hardware does not produce. */
+  _fanPct = (percent > 0) ? 100 : 0;
+  writeFan(_fanPct);
 }
 
 void HeaterSafety::engageEstop() {
@@ -239,10 +227,11 @@ bool HeaterSafety::relayPhaseOn(uint32_t nowMs) const {
 
 void HeaterSafety::applyOutput(bool on) {
   _outputOn = on;
-  digitalWrite(PIN_SSR_1, on ? HIGH : LOW);
-  digitalWrite(PIN_SSR_2, on ? HIGH : LOW);
+  digitalWrite(PIN_SSR_HEATER, on ? HIGH : LOW);
+  digitalWrite(PIN_SSR_HEATER_2, on ? HIGH : LOW);
 }
 
 void HeaterSafety::writeFan(uint8_t percent) {
-  fanWrite((uint8_t)map(constrain((int)percent, 0, 100), 0, 100, 0, 255));
+  _fanOn = (percent > 0);
+  digitalWrite(PIN_SSR_FAN, _fanOn ? HIGH : LOW);
 }

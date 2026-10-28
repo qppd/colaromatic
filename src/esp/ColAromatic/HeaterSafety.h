@@ -9,12 +9,16 @@
 /*
  * HeaterSafety — actuator outputs and every on-board interlock.
  *
- * This class owns the SSR pins, the fan output, the E-stop input, the link
- * watchdogs and the fault latches. service() must be called on EVERY loop()
- * pass: it is the single place that decides whether the heater may be
+ * This class owns the heater SSR pins, the fan SSR pin, the E-stop input, the
+ * link watchdogs and the fault latches. service() must be called on EVERY
+ * loop() pass: it is the single place that decides whether the heater may be
  * energised, and it drives the pins from that decision — including the
  * time-proportioning phase — so an interlock takes effect within one loop
  * pass of the condition becoming visible, without waiting for any command.
+ *
+ * The heater and the fan have separate SSRs. The heater duty is
+ * time-proportioned here; the fan SSR is on/off only (no PWM), so any
+ * non-zero fan request runs the fan at full speed.
  *
  * Heater authority comes from either link:
  *   - the HMI (ESP-NOW): the normal operator path. Silence for
@@ -82,7 +86,8 @@ class HeaterSafety {
   bool heaterOutput() const { return _outputOn; }
   bool heaterRequested() const { return _duty > 0.0f; }
   float dutyRequest() const { return _duty; }
-  uint8_t fanPercent() const { return _fanPct; }
+  bool fanOutput() const { return _fanOn; }     // actual fan SSR state
+  uint8_t fanPercent() const { return _fanPct; }  // 0 or 100 (SSR is on/off)
   bool estopLatched() const { return _estopLatched; }
   bool localOverTemp() const { return _localOverTemp; }
   bool overTempLatched() const { return _overTempLatch; }
@@ -119,7 +124,8 @@ class HeaterSafety {
   bool _hostWasAlive = false;   // a serial host has recently been active
   bool _hostTimedOut = false;   // serial watchdog fired while that host was live
   float _probeC = NAN;          // NAN until the first valid reading
-  uint8_t _fanPct = 0;
+  uint8_t _fanPct = 0;          // effective fan output: 0 or 100
+  bool _fanOn = false;          // actual fan SSR state
   uint32_t _lastHostFrameMs = 0;
   uint32_t _lastHmiFrameMs = 0;
   uint32_t _estopDebounceMs = 0;

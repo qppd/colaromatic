@@ -40,6 +40,7 @@ approved before it supports a claim:
 | `stages.turning_point_rebound_c` | 3 °C | detection heuristic, not roast data | probe placement |
 | `stages.color_change_delta_l` | **null (disabled)** | no calibrated colour trend exists | calibration + trials |
 | `stages.acoustic_min_confidence` | 0.6 | crack detection is unvalidated | audio survey |
+| roast / cooling fan command | 70 % / 100 % | fan speed intent | the fan SSR is on/off, so the 70 % setting actually runs the fan at full speed |
 | `timing.*` | 1 s / 2 s / 1 s / 30 s | responsiveness vs load | measured loop timing |
 
 ## 3. Colour is not yet a measurement
@@ -61,6 +62,15 @@ approved before it supports a claim:
 * A single temperature channel is supported. Whether it measures the bean mass,
   the drum or the chamber is undecided; RoR and stage inferences are only as
   good as that choice.
+* The MAX6675 has a 0.25 °C resolution and a 0..1024 °C range; it cannot report
+  temperatures below 0 °C. Its cold-junction compensation is internal and less
+  accurate than the MAX31856 it replaces, and it has no fault register beyond
+  the open-thermocouple bit. A cold-junction error or an over/under-voltage
+  condition is not detectable. A data line shorted low reads as 0 °C; an
+  unplugged module is pulled to 0xFFFF by the internal pull-up on SO and
+  reports `TC_OPEN`. The independent hardware thermal cutoff remains essential.
+* Many MAX6675 breakouts are 5 V boards. The ESP32's SPI pins are not 5 V
+  tolerant: the module must be a 3.3 V type or SO/SCK/CS must be level-shifted.
 * The EMA filter introduces lag: the controller regulates the filtered value,
   and the reported RoR is computed from the filtered series. Both effects need
   to be quantified before the RoR numbers are quoted as process values.
@@ -121,6 +131,9 @@ approved before it supports a claim:
   SSR must not be driven by this output stage.
 * Fan operation is commanded but not sensed: the software cannot prove that the
   fan is running during cooling.
+* The fan has its own SSR and is switched on/off only. Any non-zero fan command
+  runs it at full speed; there is no PWM or phase control, so the 70 % roast
+  fan setting is not a reduced speed.
 * Heater feedback is optional and unverified; a stuck SSR is therefore not
   detected unless that line is wired and `feedback_expected` is enabled.
 * The controller-side interlocks (probe fault, E-stop, over-temperature, host

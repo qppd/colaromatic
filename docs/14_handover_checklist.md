@@ -41,7 +41,7 @@ is marked done on the strength of intent.
 | C2 | Missing-component list | `docs/03...` §6 | done as a list; procurement open |
 | C3 | Measured heater voltage/current/inrush and protection sizing | `docs/04...` §3 | open |
 | C4 | Independent thermal cutoff installed and tested with the controller off | test record | open |
-| C5 | SSR type confirmed and switching verified with a lamp load | test record | open |
+| C5 | SSR type confirmed and switching verified with a lamp load (heater and fan SSRs) | test record | open |
 | C6 | Enclosure, grounding, strain relief, fuse/breaker | photos + measurements | open |
 | C7 | Sensor mounting: probe position, colour optics, e-nose sampling | photos + drawings | open |
 | C8 | Wiring diagram as built | schematic | open |

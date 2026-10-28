@@ -2,12 +2,24 @@
 
 #include <math.h>
 
-FuzzyController::FuzzyController() {
+/* The generated table: same values the firmware used before the colour
+   setpoint loop was added, only wrapped so the inference code can take any
+   table. */
+const FuzzyTable &generatedFuzzyTable() {
+  static const FuzzyTable table = {
+      GEN_FUZZY_INPUTS, GEN_FUZZY_INPUT_COUNT,
+      GEN_FUZZY_RULES,  GEN_FUZZY_RULE_COUNT,
+      GEN_FUZZY_OUTPUT_TERMS,
+      GEN_FUZZY_OUT_MIN, GEN_FUZZY_OUT_MAX, GEN_FUZZY_FALLBACK_PCT};
+  return table;
+}
+
+FuzzyController::FuzzyController(const FuzzyTable &table) : _table(&table) {
   /* Discrete output universe, identical to numpy.linspace(min, max, res). */
-  const float span = GEN_FUZZY_OUT_MAX - GEN_FUZZY_OUT_MIN;
+  const float span = _table->outMax - _table->outMin;
   const int last = GEN_FUZZY_OUT_RES - 1;
   for (int i = 0; i < GEN_FUZZY_OUT_RES; i++) {
-    _universe[i] = GEN_FUZZY_OUT_MIN + span * ((float)i / (float)last);
+    _universe[i] = _table->outMin + span * ((float)i / (float)last);
   }
 }
 
@@ -36,8 +48,8 @@ FuzzyController::Result FuzzyController::evaluate(const float *values) {
 
   /* A required input that is missing aborts the evaluation — output 0, never
      an extrapolation (mirror: FuzzyResult(None, "missing_input")). */
-  for (int i = 0; i < GEN_FUZZY_INPUT_COUNT; i++) {
-    if (!GEN_FUZZY_INPUTS[i].enabled) continue;
+  for (int i = 0; i < _table->inputCount; i++) {
+    if (!_table->inputs[i].enabled) continue;
     const float v = values[i];
     if (isnan(v) || isinf(v)) {
       result.status = STATUS_MISSING_INPUT;
@@ -50,13 +62,13 @@ FuzzyController::Result FuzzyController::evaluate(const float *values) {
   for (int k = 0; k < GEN_FUZZY_OUT_RES; k++) aggregate[k] = 0.0f;
 
   uint8_t fired = 0;
-  for (int r = 0; r < GEN_FUZZY_RULE_COUNT; r++) {
-    const GenFuzzyRule &rule = GEN_FUZZY_RULES[r];
+  for (int r = 0; r < _table->ruleCount; r++) {
+    const GenFuzzyRule &rule = _table->rules[r];
     float strength = 1.0f;
     bool skip = false;
     for (int a = 0; a < rule.antCount; a++) {
       const GenFuzzyAnt &ant = rule.ants[a];
-      const GenFuzzyInput &in = GEN_FUZZY_INPUTS[ant.input];
+      const GenFuzzyInput &in = _table->inputs[ant.input];
       if (!in.enabled) { skip = true; break; }  // rule references a disabled input
       const float v = clampTo(values[ant.input], in.umin, in.umax);
       float mu = membership(in.terms[ant.term], v);
@@ -68,7 +80,7 @@ FuzzyController::Result FuzzyController::evaluate(const float *values) {
     if (!(strength > 1e-9f)) continue;
 
     fired++;
-    const GenFuzzyTerm &outTerm = GEN_FUZZY_OUTPUT_TERMS[rule.consequent];
+    const GenFuzzyTerm &outTerm = _table->outTerms[rule.consequent];
     for (int k = 0; k < GEN_FUZZY_OUT_RES; k++) {
       const float mu = membership(outTerm, _universe[k]);
       const float impl = mu < strength ? mu : strength;
@@ -84,14 +96,14 @@ FuzzyController::Result FuzzyController::evaluate(const float *values) {
 
   if (!(total > 1e-9f)) {
     result.status = STATUS_NO_RULES_FIRED;
-    result.output = GEN_FUZZY_FALLBACK_PCT;
+    result.output = _table->fallback;
     result.fired = fired;
     return result;
   }
 
   float centroid = weighted / total;
-  if (centroid < GEN_FUZZY_OUT_MIN) centroid = GEN_FUZZY_OUT_MIN;
-  if (centroid > GEN_FUZZY_OUT_MAX) centroid = GEN_FUZZY_OUT_MAX;
+  if (centroid < _table->outMin) centroid = _table->outMin;
+  if (centroid > _table->outMax) centroid = _table->outMax;
   result.status = STATUS_OK;
   result.output = centroid;
   result.fired = fired;
