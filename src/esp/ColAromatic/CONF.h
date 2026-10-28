@@ -104,5 +104,13 @@
    they are shared verbatim with the HMI sketch. */
 #define HMI_PAIR_MAGIC          0x5A   // OP_PAIR argument that reopens pairing
 
+/* The touch panel's station MAC. The controller prints its own MAC at boot and
+   the panel prints its own; paste each into the other's firmware so the two
+   boards address each other directly instead of relying on the pairing
+   handshake. All zero keeps the auto-pair behaviour (first HMI beacon wins).
+   A MAC already stored in NVS takes precedence over this constant, so
+   OP_PAIR re-pairing still works after a board swap. */
+#define HMI_PEER_MAC            {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+
 /* --- Protocol ---------------------------------------------------------- */
 #define FIRMWARE_BANNER         "# ColAromatic controller ready (PROVISIONAL FIRMWARE)"

@@ -43,6 +43,7 @@
  */
 
 #include <Arduino.h>
+#include <esp_mac.h>
 
 #include "PINS.h"
 #include "CONF.h"
@@ -336,6 +337,18 @@ void buildState(LinkState &st, uint32_t now) {
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
+
+  /* The panel needs this MAC for its CONTROLLER_PEER_MAC, so print it before
+     anything that can fail. The controller's own copy of the panel's MAC is
+     HMI_PEER_MAC in CONF.h (or whatever was stored by the pairing handshake). */
+  {
+    uint8_t mac[6] = {0};
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+      Serial.printf("# controller MAC %02X:%02X:%02X:%02X:%02X:%02X\n", mac[0],
+                    mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+  }
+
   hostLink.begin(Serial, heaterSafety);
   heaterSafety.begin();
   roast.begin();

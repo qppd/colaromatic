@@ -54,10 +54,28 @@ void HmiLink::loadPeer() {
   Preferences prefs;
   if (prefs.begin("colaromatic", true)) {
     if (prefs.getBytesLength("hmi_mac") == 6) {
-      prefs.getBytes("hmi_mac", _peerMac, 6);
-      _paired = true;
+      uint8_t stored[6] = {0};
+      prefs.getBytes("hmi_mac", stored, 6);
+      static const uint8_t zero[6] = {0, 0, 0, 0, 0, 0};
+      /* An unwritten/cleared key must not look like a paired panel: a zero
+         MAC would be "paired" and then reject every real frame. */
+      if (memcmp(stored, zero, 6) != 0) {
+        memcpy(_peerMac, stored, 6);
+        _paired = true;
+      }
     }
     prefs.end();
+  }
+  if (_paired) return;
+
+  /* Nothing paired yet: fall back to the panel MAC burned in at build time, so
+     a freshly flashed controller talks to its own panel with no handshake.
+     NVS wins over the constant once a pairing has happened (board swap). */
+  static const uint8_t configured[6] = HMI_PEER_MAC;
+  static const uint8_t zero[6] = {0, 0, 0, 0, 0, 0};
+  if (memcmp(configured, zero, 6) != 0) {
+    memcpy(_peerMac, configured, 6);
+    _paired = true;
   }
 }
 
@@ -89,14 +107,20 @@ bool HmiLink::adoptPeer(const uint8_t *mac, uint32_t nowMs) {
 
 void HmiLink::openPairing(uint32_t nowMs) {
   (void)nowMs;
-  _paired = false;
-  _justPaired = false;
-  memset(_peerMac, 0, sizeof(_peerMac));
   if (esp_now_is_peer_exist(_peerMac)) {
     esp_now_del_peer(_peerMac);
   }
+  _paired = false;
+  _justPaired = false;
+  memset(_peerMac, 0, sizeof(_peerMac));
   _lastCmdValid = false;
-  savePeer();
+  /* Remove the key instead of storing zeros: loadPeer treats a stored all-zero
+     MAC as "not paired", but removing it keeps that invariant obvious. */
+  Preferences prefs;
+  if (prefs.begin("colaromatic", false)) {
+    prefs.remove("hmi_mac");
+    prefs.end();
+  }
 }
 
 // ---- receive path --------------------------------------------------------

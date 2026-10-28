@@ -128,3 +128,65 @@ line noise cannot keep a dead host looking alive.
 * The BME688 reading blocks for roughly 200 ms and is therefore done once per
   report period, never in the interlock path.
 * No over-the-air update and no on-board logging: sessions live on the host.
+
+## 7. HMI panel firmware
+
+The operator panel is a second sketch, `src/esp/HMI/`, for the
+ESP32-S3-Touch-LCD-4.3 (LVGL 8 over the Espressif `esp_panel` board stack). It
+was written from the reference sketch in `reference/MultiDryerHMI/` and shares
+none of its drying logic: it is a thin client for `LinkFrames.h`.
+
+| File | Contents |
+|---|---|
+| `HMI.ino` | `setup()`/`loop()`: radio, display, LVGL, one UI timer |
+| `esp_now_link.h/.cpp` | ESP-NOW transport, beacons, pairing, command wrappers |
+| `hmi_data.h/.cpp` | locked copy of the controller telemetry, event log, text tables |
+| `screen_manager.h/.cpp` | screen lifecycle (screens are deleted when left) |
+| `boot_screen.*` | splash with both MACs and the link state |
+| `dashboard_screen.*` | gauge, RoR, duty, stage, session timer, one-tap actions |
+| `control_screen.*` | profile, mode, setpoint, manual duty, fan, stage confirm |
+| `analytics_screen.*` | temperature/target, RoR, colour and gas curves |
+| `diagnostics_screen.*` | link, inputs, faults, events, re-pair, fault reset |
+| `alert_popup.*` | trips, refusals, endpoint, completion |
+| `ui_theme.h`, `ui_styles.*` | geometry, palette, fonts, shared widgets |
+| `LinkFrames.h` | copy of the controller's frame contract — must stay identical |
+| `GenProfiles.h` | copy of the generated profile table, for display only |
+| `lvgl_v8_port.*`, `esp_panel_board_custom_conf.h` | board support, taken verbatim from the reference sketch |
+
+### Address the two boards by MAC
+
+1. Flash the controller. Its log prints
+   `# controller MAC 24:6F:28:xx:xx:xx`.
+2. Paste that into `CONTROLLER_PEER_MAC` in `src/esp/HMI/esp_now_link.h`.
+3. Flash the panel. The boot screen and the log print its station MAC
+   (`[HMI] MAC (station): ...`).
+4. Paste that into `HMI_PEER_MAC` in `src/esp/ColAromatic/CONF.h` and reflash
+   the controller.
+
+Both constants may be left all-zero: the panel then beacons on the broadcast
+address with `LINK_FLAG_PAIR`, the controller adopts the first panel that
+beacons, both sides store the peer in NVS, and `DIAGNOSTICS → RE-PAIR` re-runs
+that handshake. The MAC constants simply skip the handshake. Both firmwares
+must use the same `LINK_WIFI_CHANNEL` (`LinkFrames.h`).
+
+The panel is not in the control path: stopping its beacons makes the
+controller drop heater authority after `LINK_TIMEOUT_MS` (5 s), which is
+deliberate.
+
+### Libraries
+
+* **LVGL 8.x** (the sketch uses the `lv_meter`, `lv_chart`, `lv_tabview` and
+  `lv_dropdown` APIs of v8; v9 renamed them).
+* **esp_panel** board support (provides `esp_display_panel.hpp`).
+* `lv_conf.h` must enable Montserrat 16/20/24/30/36/48 — the theme uses all
+  six sizes.
+
+### Not verified
+
+This sketch has never been compiled or flashed either (no toolchain on the
+build machine used for this change). `esp_panel_board_custom_conf.h` is the
+reference project's **Waveshare ESP32-S3-Touch-LCD-7 (800×480)** configuration;
+if the fitted panel is the 4.3" model, that file must be replaced with its
+panel/touch/bus configuration, and the 800×480 layout in `ui_theme.h` may need
+adjusting. The panel has no SD-card writer: controller events are shown on the
+diagnostics screen and are not recorded.

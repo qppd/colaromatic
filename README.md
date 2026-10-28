@@ -29,18 +29,35 @@ src/esp/ColAromatic/   Main controller firmware (ESP32 38-pin)
   ColorSensor.*        TCS3200 light-to-frequency color sensor
   EnoseSensor.*        BME688 gas sensor
   AcousticSensor.*     Envelope microphone / crack detection
-src/esp/HMI/           HMI touch panel firmware (ESP32-S3)
+src/esp/HMI/           HMI touch panel firmware (ESP32-S3, LVGL 8)
+  HMI.ino              Arduino sketch entry point
+  esp_now_link.*       ESP-NOW transport + pairing (LinkFrames.h)
+  hmi_data.*           locked copy of the controller telemetry
+  screen_manager.*     boot / dashboard / control / curves / diagnostics
+  * _screen.*          the five screens
+  alert_popup.*        trips, refusals, endpoint, completion
+  ui_theme.h, ui_styles.*  geometry, palette, fonts, widgets
 src/esp/common/        Shared frame definitions (LinkFrames.h)
 docs/                  Technical documentation
 ```
 
 ## Build & Flash
 
-Open `src/esp/ColAromatic/ColAromatic.ino` in Arduino IDE.
+**Controller.** Open `src/esp/ColAromatic/ColAromatic.ino` in Arduino IDE.
 Select `ESP32 Dev Module` as the board. Install required libraries:
 - `EspNow`
 - `Adafruit_BME688`
 - no thermocouple library: the MAX6675 is read directly over SPI
+
+**Panel.** Open `src/esp/HMI/HMI.ino`, select the ESP32-S3 board that matches the
+panel, and install `lvgl` (v8) plus the `esp_panel` board support. `lv_conf.h`
+must enable Montserrat 16/20/24/30/36/48.
+
+**Pairing by MAC.** Each board prints its station MAC at boot. Paste the
+controller's MAC into `CONTROLLER_PEER_MAC` (`src/esp/HMI/esp_now_link.h`) and
+the panel's into `HMI_PEER_MAC` (`src/esp/ColAromatic/CONF.h`). Both may be left
+zero: the panel then pairs with the first controller that answers its pairing
+beacon, and `DIAGNOSTICS → RE-PAIR` repeats that handshake.
 
 See [docs/17_firmware_build_flash.md](docs/17_firmware_build_flash.md) for details.
 

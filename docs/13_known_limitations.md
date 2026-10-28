@@ -15,7 +15,8 @@ consistent with it.
 | Fuzzy controller performance | never measured on the physical plant |
 | Sensor repeatability during roasting | not measured |
 | Hardware thermal cutoff, fusing, grounding | designed on paper only |
-| HMI deployment on the 5-inch panel | not attempted; panel model unknown |
+| HMI panel firmware | written (`src/esp/HMI/`), never compiled or flashed; board configuration inherited from the reference 7" sketch and must match the fitted panel |
+| HMI event logging | events are shown on the panel and lost on power-off; no SD writer |
 | Firmware on real hardware | compiles; never flashed or run |
 
 ## 2. Unvalidated threshold values (all in `src/config/system.json`)
