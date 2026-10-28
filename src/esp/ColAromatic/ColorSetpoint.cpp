@@ -5,49 +5,87 @@
 namespace {
 
 /* --- colour error universe, in ratio units ----------------------------- */
-/* Negative = darker than the target (too little heat), positive = lighter. */
-const float IN_DARK_PTS[] = {-0.30f, 1.0f, -0.04f, 0.0f};
-const float IN_TARGET_PTS[] = {-0.06f, 0.0f, 0.0f, 1.0f, 0.06f, 0.0f};
-const float IN_LIGHT_PTS[] = {0.04f, 0.0f, 0.30f, 1.0f};
+/* Negative = darker than the target (too little heat), positive = lighter.
+
+   The five terms are spaced 0.15 apart and each side of a peak ramps to zero
+   exactly where its neighbour's peak is, so at every error at most two terms
+   are non-zero and their memberships sum to 1. That overlap is what makes the
+   surface continuous: the controller never hands over from one rule to the
+   next at a single point.
+
+   (The first version of this table used three wide terms with flat tops
+   ("darker" was 1 from -0.30 to -0.04). Combined with shoulder-shaped output
+   terms it produced a step function: ~157 degC for every negative error, a
+   30 degC jump at -0.04, a flat 190 around zero, and another 26 degC jump.
+   Measured, not guessed - see the numbers in the commit.) */
+const float IN_VERY_DARK_PTS[] = {-0.30f, 1.0f, -0.15f, 0.0f};
+const float IN_DARK_PTS[] = {-0.30f, 0.0f, -0.15f, 1.0f, 0.00f, 0.0f};
+const float IN_TARGET_PTS[] = {-0.15f, 0.0f, 0.00f, 1.0f, 0.15f, 0.0f};
+const float IN_LIGHT_PTS[] = {0.00f, 0.0f, 0.15f, 1.0f, 0.30f, 0.0f};
+const float IN_VERY_LIGHT_PTS[] = {0.15f, 0.0f, 0.30f, 1.0f};
 
 const GenFuzzyTerm IN_TERMS[] = {
-    {"darker", 2, IN_DARK_PTS},
+    {"very_dark", 2, IN_VERY_DARK_PTS},
+    {"dark", 3, IN_DARK_PTS},
     {"on_target", 3, IN_TARGET_PTS},
-    {"lighter", 2, IN_LIGHT_PTS},
+    {"light", 3, IN_LIGHT_PTS},
+    {"very_light", 2, IN_VERY_LIGHT_PTS},
 };
 
-/* --- setpoint universe, °C --------------------------------------------- */
-/* Same piecewise-linear shoulders as the generated table: an outer point of 1
-   stays 1 beyond the universe edge. */
-const float OUT_LOW_PTS[] = {150.0f, 1.0f, 170.0f, 0.0f};
-const float OUT_MID_PTS[] = {165.0f, 0.0f, 190.0f, 1.0f, 215.0f, 0.0f};
-const float OUT_HIGH_PTS[] = {200.0f, 0.0f, 230.0f, 1.0f};
+/* --- setpoint universe, degC ------------------------------------------- */
+/* Five consequents, one per input term, moves 20 degC per step up the
+   universe. The two end terms are shoulders, so a single rule at full
+   strength defuzzifies to the centroid of that shoulder (~156 degC at the
+   cold end, ~224 degC at the hot end) rather than to the universe edge; the
+   interior terms are symmetric triangles whose centroid is their peak.
+   Interior rules therefore interpolate cleanly, and only the two saturated
+   extremes sit slightly inside [150, 230]. */
+const float OUT_COOLEST_PTS[] = {150.0f, 1.0f, 170.0f, 0.0f};
+const float OUT_COOLER_PTS[] = {150.0f, 0.0f, 170.0f, 1.0f, 190.0f, 0.0f};
+const float OUT_TARGET_PTS[] = {170.0f, 0.0f, 190.0f, 1.0f, 210.0f, 0.0f};
+const float OUT_WARMER_PTS[] = {190.0f, 0.0f, 210.0f, 1.0f, 230.0f, 0.0f};
+const float OUT_HOTTEST_PTS[] = {210.0f, 0.0f, 230.0f, 1.0f};
 
 const GenFuzzyTerm OUT_TERMS[] = {
-    {"low", 2, OUT_LOW_PTS},
-    {"mid", 3, OUT_MID_PTS},
-    {"high", 2, OUT_HIGH_PTS},
+    {"coolest", 2, OUT_COOLEST_PTS},
+    {"cooler", 3, OUT_COOLER_PTS},
+    {"target", 3, OUT_TARGET_PTS},
+    {"warmer", 3, OUT_WARMER_PTS},
+    {"hottest", 2, OUT_HOTTEST_PTS},
 };
 
 const GenFuzzyInput INPUTS[] = {
-    {"color_error", -0.30f, 0.30f, 1, IN_TERMS, 3},
+    {"color_error", -0.30f, 0.30f, 1, IN_TERMS, 5},
 };
 
-const GenFuzzyAnt ANT_DARK[] = {{0, 0, 0}};
-const GenFuzzyAnt ANT_TARGET[] = {{0, 1, 0}};
-const GenFuzzyAnt ANT_LIGHT[] = {{0, 2, 0}};
+const GenFuzzyAnt ANT_VERY_DARK[] = {{0, 0, 0}};
+const GenFuzzyAnt ANT_DARK[] = {{0, 1, 0}};
+const GenFuzzyAnt ANT_TARGET[] = {{0, 2, 0}};
+const GenFuzzyAnt ANT_LIGHT[] = {{0, 3, 0}};
+const GenFuzzyAnt ANT_VERY_LIGHT[] = {{0, 4, 0}};
 
 /* Monotonic on purpose: lighter than target -> hotter setpoint, darker ->
-   cooler. A non-monotonic rule base here would be an untestable guess. */
+   cooler, one rule per term, so the surface rises with the error and cannot
+   fold back on itself. A non-monotonic rule base here would be an untestable
+   guess. */
 const GenFuzzyRule RULES[] = {
-    {"C1_darker_cooler", ANT_DARK, 1, 0, 1.0f},
-    {"C2_on_target", ANT_TARGET, 1, 1, 1.0f},
-    {"C3_lighter_hotter", ANT_LIGHT, 1, 2, 1.0f},
+    {"C1_very_dark_coolest", ANT_VERY_DARK, 1, 0, 1.0f},
+    {"C2_dark_cooler", ANT_DARK, 1, 1, 1.0f},
+    {"C3_on_target", ANT_TARGET, 1, 2, 1.0f},
+    {"C4_light_warmer", ANT_LIGHT, 1, 3, 1.0f},
+    {"C5_very_light_hottest", ANT_VERY_LIGHT, 1, 4, 1.0f},
 };
 
 const FuzzyTable COLOR_TABLE = {
-    INPUTS, 1, RULES, 3, OUT_TERMS,
+    INPUTS, 1, RULES, 5, OUT_TERMS,
     COLOR_SETPOINT_MIN_C, COLOR_SETPOINT_MAX_C, COLOR_SETPOINT_MIN_C};
+
+/* The table and the terms must stay consistent: a rule pointing past the end
+   of OUT_TERMS would be an out-of-bounds read on the machine. */
+static_assert(sizeof(RULES) / sizeof(RULES[0]) == 5,
+              "rule count must match the number of input terms");
+static_assert(sizeof(OUT_TERMS) / sizeof(OUT_TERMS[0]) == 5,
+              "consequent indices are fixed at 0..4");
 
 }  // namespace
 

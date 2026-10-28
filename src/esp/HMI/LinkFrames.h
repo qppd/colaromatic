@@ -135,7 +135,7 @@ enum LinkAckResult : uint8_t {
   ACK_PROFILE = 4,   // unknown profile index
 };
 
-/* ---- Event: controller -> HMI (written to the SD card) ---------------- */
+/* ---- Event: controller -> HMI (volatile panel log; nothing is stored) --- */
 struct __attribute__((packed)) LinkEvent {
   uint32_t sessionMs;  // roast elapsed when it happened (0 if idle)
   uint16_t value;      // event-specific numeric evidence
@@ -155,7 +155,7 @@ enum LinkEventType : uint8_t {
   EV_ENDPOINT_PENDING = 5,
   EV_CRACK = 6,
   EV_SESSION_START = 7,
-  EV_ROAST_HEARTBEAT = 8,      // periodic row also written by the HMI logger
+  EV_ROAST_HEARTBEAT = 8,      // periodic row for the panel's volatile event log
   EV_COOLING_UNVERIFIED = 9,   // cooling ended without a verified reading
   EV_HEATER_COMMAND = 10,      // applied duty changed by >= 5 %
 };
@@ -208,11 +208,11 @@ enum LinkColorStatus : uint8_t {
   COLOR_INVALID = 3,
 };
 
-/* Fault mask: mirrors the host supervisor's fault codes (docs/01 SAFE rows). */
+/* Fault mask shared with the panel (docs/01 section K, docs/08 section 4). */
 enum LinkFaultBit : uint16_t {
   F_TEMP_INVALID  = 1u << 0,
   F_TEMP_STALE    = 1u << 1,
-  F_OVER_TEMP     = 1u << 2,  // host-limit backstop (safety.max_temperature_c)
+  F_OVER_TEMP     = 1u << 2,  // process limit (GenConfig GEN_MAX_TEMP_C), latched
   F_LOCAL_OVERTEMP= 1u << 3,  // firmware backstop (CONF.h LOCAL_MAX_TEMP_C)
   F_ROR_RUNAWAY   = 1u << 4,
   F_ESTOP         = 1u << 5,

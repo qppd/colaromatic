@@ -6,10 +6,10 @@
 .pio/
 .pde/
 
-# Generated headers (baked from config)
-src/esp/ColAromatic/GenConfig.h
-src/esp/ColAromatic/GenFuzzy.h
-src/esp/ColAromatic/GenProfiles.h
+# GenConfig.h / GenFuzzy.h / GenProfiles.h are NOT ignored: they were once
+# generated from src/config/*.json, but the generator and the JSON were removed
+# with the Python host, so they are now hand-maintained source (docs/01
+# REQ-SYS-002). Without them a fresh clone cannot compile the controller.
 
 # IDE
 .vscode/

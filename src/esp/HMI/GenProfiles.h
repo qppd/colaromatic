@@ -1,7 +1,7 @@
-/* GENERATED FILE — DO NOT EDIT.
- * Written by src/tools/gen_firmware_tables.py from the JSON sources.
- * Edit the JSON, then regenerate; src/tests/test_firmware_tables.py
- * fails if this file is out of date. */
+/* FORMERLY GENERATED — NOW HAND-MAINTAINED.
+ * Originally written by src/tools/gen_firmware_tables.py from src/config/*.json,
+ * both of which were removed with the Python host, so these values are now
+ * edited directly here and must be reviewed like any other code (docs/01 REQ-SYS-002). */
 
 #pragma once
 

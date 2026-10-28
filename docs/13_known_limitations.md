@@ -19,42 +19,49 @@ consistent with it.
 | HMI event logging | events are shown on the panel and lost on power-off; no SD writer |
 | Firmware on real hardware | compiles; never flashed or run |
 
-## 2. Unvalidated threshold values (all in `src/config/system.json`)
+## 2. Unvalidated threshold values (all in `GenConfig.h` / `CONF.h`)
 
 Every number below is an engineering placeholder and must be replaced or
-approved before it supports a claim:
+approved before it supports a claim. The `GEN_*` macros were generated from the
+removed host's `src/config/system.json`; the generator is gone (docs/01
+REQ-SYS-002), so these headers are now hand-maintained. Firmware-only constants
+live in `CONF.h`.
 
 | Key | Value | Basis | Needed |
 |---|---|---|---|
-| `heater.commissioning_max_pct` | 30 % | cautious cap pending the electrical review | measured load, SSR rating |
-| `heater.window_s` | 10 s | typical for zero-cross time-proportioning | SSR type confirmation |
-| `heater.min_on_ms` / `min_off_ms` | 500 ms | protects the SSR from pulses too short to switch | SSR datasheet |
-| `safety.max_temperature_c` | 240 °C | conservative ceiling | valid for the beans and the hardware? |
-| `safety.max_ror_c_per_min` | 45 °C/min | runaway guard | measured roasts |
-| `safety.temperature_stale_timeout_s` | 5 s | sensor/plan speed | measured update rate |
-| `safety.cooling_min_s` / `max_s` / `target_c` | 60 s / 600 s / 60 °C | batch safety | cooling curve measurement |
-| `safety.estop_reset_max_c` | 80 °C | conservative release gate | hardware / hand-safety limits |
-| `temperature.ror_window_s` / `ror_min_span_s` | 30 s / 10 s | smooths noise, still responsive | noise measurement |
-| `temperature.max_rate_c_per_s` | 60 °C/s | catches disconnects | probe dynamics |
-| `temperature.noisy_residual_c` | 2 °C | noise flag | measured probe noise |
-| `color.max_valid_hz` / `saturation_fraction` | 2 MHz / 0.98 | TCS3200 full scale | module behaviour |
-| `stages.turning_point_rebound_c` | 3 °C | detection heuristic, not roast data | probe placement |
-| `stages.color_change_delta_l` | **null (disabled)** | no calibrated colour trend exists | calibration + trials |
-| `stages.acoustic_min_confidence` | 0.6 | crack detection is unvalidated | audio survey |
-| roast / cooling fan command | 70 % / 100 % | fan speed intent | the fan SSR is on/off, so the 70 % setting actually runs the fan at full speed |
-| `timing.*` | 1 s / 2 s / 1 s / 30 s | responsiveness vs load | measured loop timing |
+| `GEN_DUTY_CEILING_PCT` | 30 % | cautious cap pending the electrical review | measured load, SSR rating |
+| `GEN_HEATER_WINDOW_MS` | 10 000 ms | typical for zero-cross time-proportioning | SSR type confirmation |
+| `GEN_HEATER_MIN_ON_MS` / `MIN_OFF_MS` | 500 ms | protects the SSR from pulses too short to switch | SSR datasheet |
+| `GEN_MAX_TEMP_C` (process) / `LOCAL_MAX_TEMP_C` (backstop) | 240 °C / 250 °C | conservative ceilings | valid for the beans and the hardware? |
+| `GEN_MAX_ROR_CPM` + `GEN_ROR_RUNAWAY_STRIKES` | 45 °C/min, 3 strikes | runaway guard | measured roasts |
+| `GEN_TEMP_STALE_S` | 3 s | sensor/plan speed | measured update rate |
+| `GEN_COOLING_MIN_S` / `MAX_S` / `TARGET_C` | 60 s / 600 s / 60 °C | batch safety | cooling curve measurement |
+| `GEN_ESTOP_RESET_MAX_C` | 80 °C | conservative release gate | hardware / hand-safety limits |
+| `GEN_ROR_WINDOW_S` / `GEN_ROR_MIN_SPAN_S` | 30 s / 10 s | smooths noise, still responsive | noise measurement |
+| `GEN_EMA_ALPHA` | 0.25 | filter lag vs smoothness | measured probe noise |
+| `GEN_COLOR_MIN_HZ` / `MAX_HZ`, `COLOR_MIN_SUM_HZ` | 10 Hz / 2 MHz / 30 Hz sum | TCS3200 validity window | module behaviour |
+| `GEN_TP_REBOUND_C` / `GEN_TP_MIN_ELAPSED_S` | 3 °C / 30 s | detection heuristic, not roast data | probe placement |
+| `GEN_COLOR_CHANGE_DELTA_L` | −1 (**disabled**) | no calibrated colour trend exists | calibration + trials |
+| `GEN_ACOUSTIC_MIN_CONF` | 0.6 | crack detection is unvalidated | audio survey |
+| roast / cooling fan command | `GEN_ROAST_FAN_PCT` 70 / `GEN_COOLING_FAN_PCT` 100 | fan speed intent | the fan SSR is on/off, so the 70 % setting actually runs the fan at full speed |
+| `GEN_SENSOR_PERIOD_MS` / `GEN_CONTROL_PERIOD_MS` / `REPORT_PERIOD_MS` | 1 s / 2 s / 1 s | responsiveness vs load | measured loop timing |
+| `LINK_STATE_PERIOD_MS` / `LINK_TIMEOUT_MS` / `HOST_TIMEOUT_MS` | 500 ms / 5 s / 3 s | telemetry cadence and both watchdogs | measured radio and serial behaviour |
+| `COLOR_TARGET_RATIO` | 0.45 placeholder | **not a measurement** | docs/07 §3 |
+| `PID_KP` / `PID_KI` / `PID_KD` | placeholders | never exercised | plant characterisation (docs/06 §6) |
 
 ## 3. Colour is not yet a measurement
 
-* The colour values the software displays come from
-  `src/config/calibration/color_calibration.json`, whose status is
-  `SYNTHETIC_PLACEHOLDER`. The matrix is the standard linear-sRGB→XYZ matrix
-  scaled to Yn = 100, not a fit to measurements of this sensor.
-* Because of that, the shipped colour targets for the 12 profiles are **empty**,
-  ΔE-to-target is unavailable, the colour endpoint method is unusable, and the
-  fuzzy controller's colour input is disabled by default.
-* The colour argument in the project title therefore has a software pipeline and
-  a documented calibration procedure — **not** a validated measurement.
+* There is **no colorimetry in the repository at all**: no L\*a\*b\*, no ΔE, no
+  calibration record. The firmware computes a browning ratio
+  (`red / (red+green+blue)`) and reports `COLOR_UNCALIBRATED` beside it
+  (docs/07).
+* `COLOR_TARGET_RATIO` (0.45) is a placeholder, so the colour error the outer
+  loop regulates on is measured against an unmeasured target. ΔE-to-target does
+  not exist and the colour endpoint method is unusable.
+* Because no profile carries a measured colour target, none is auto-eligible:
+  automatic mode cannot start (docs/01 §B).
+* The colour argument in the project title therefore has a ratio and a
+  documented calibration procedure — **not** a validated measurement.
 * The optical fixture (illumination, distance, angle, shielding, window,
   sampling location) is unspecified engineering work.
 
@@ -78,20 +85,25 @@ approved before it supports a claim:
 * RoR needs ~10 s of history; the first seconds of a roast have no RoR and
   automatic control therefore commands 0 % until an RoR exists rather than
   guessing.
-* Turning-point detection is a heuristic (minimum + rebound threshold). It has
-  been tested against the simulator, not against a real probe signal.
+* Turning-point detection is a heuristic (minimum + rebound threshold,
+  `GEN_TP_REBOUND_C` / `GEN_TP_MIN_ELAPSED_S`). It has been reviewed, never
+  executed: there is no simulator in this repository and no board run.
 
 ## 5. Control
 
-* The fuzzy rule base is `INITIAL_UNVALIDATED`; nothing in it comes from roast
-  data.
-* No plant model exists, so the control period, the term boundaries and the
-  absence of an integral term are judgements.
-* Automatic heating with a provisional profile is blocked unless a written
-  commissioning approval exists. That is deliberate, and it means the shipped
-  configuration **cannot** run automatic control out of the box.
-* With the 30 % commissioning ceiling, the controller can saturate and never
-  reach the target; that would be a hardware limitation, not a controller bug.
+* Both rule bases are `INITIAL_UNVALIDATED`; nothing in them comes from roast
+  data (docs/06).
+* No plant model exists, so the control period (2 s), the term boundaries and
+  the PID gains are judgements, not measurements.
+* Automatic mode is blocked for every shipped profile: all 12 have
+  `autoEligible = 0`, so `RoastControl::start` refuses it with a reason. That is
+  deliberate, and it means the shipped configuration **cannot** run automatic
+  control out of the box.
+* The colour surface is continuous and monotone (reproduced numerically from its
+  tables), but it has never executed on a board; the PID has only been reasoned
+  through, never simulated.
+* With the 30 % duty ceiling the controller can saturate and never reach the
+  target; that would be a hardware limitation, not a controller bug.
 * The project cannot claim "optimal adaptive control" without a comparative
   experiment against a baseline; that experiment has not been run.
 
@@ -111,8 +123,9 @@ approved before it supports a claim:
 
 * Gas resistance is a sensor response. It does not identify volatile compounds,
   and no aroma/quality classification model exists or is claimed.
-* Baseline R₀ is a median over the first samples of a session, so sessions
-  compared across days are affected by sensor drift and ambient conditions.
+* No baseline R₀ is captured at all (REQ-ENOSE-002 `PARTIAL`): raw gas
+  resistance is all the machine reports, so values cannot be normalised across
+  sessions and are affected by sensor drift and ambient conditions.
 * Placement is unresolved: the sensor must stay below `enose_max_c` and free of
   condensation and particulates, which probably requires a cooled or diluted
   sampling path that has not been engineered here.
@@ -126,8 +139,8 @@ approved before it supports a claim:
   independent over-temperature protection.
 * The heater circuit has never been energised in this project; no current,
   inrush, heatsink or leakage measurement exists.
-* Duty is capped at 30 % until `heater.hardware_verified` is set, and that flag
-  must not be set without the electrical review documented in doc 04 §3.
+* Duty is capped at `GEN_DUTY_CEILING_PCT` (30 %), and that ceiling must not be
+  raised without the electrical review documented in docs/04 §3.
 * Electrical switching assumes a zero-cross SSR. A random-fire or phase-angle
   SSR must not be driven by this output stage.
 * Fan operation is commanded but not sensed: the software cannot prove that the
@@ -137,18 +150,19 @@ approved before it supports a claim:
   fan setting is not a reduced speed.
 * Heater feedback is optional and unverified; a stuck SSR is therefore not
   detected unless that line is wired and `feedback_expected` is enabled.
-* The controller-side interlocks (probe fault, E-stop, over-temperature, host
-  watchdog) are evaluated on every firmware loop pass and the firmware
-  compiles, but none of them has ever run on a board. Only the host side of
-  that review is covered by automated tests.
-* The host feeds the controller's watchdog by re-asserting its heater command
-  once a second. That assumes an honest serial path: an adapter that accepts
-  writes and drops them is only detected through the controller's `link`
-  field, one report at a time.
-* The E-stop input uses the ESP32's internal pull-up on GPIO 16. A long or
-  unshielded run needs an external pull-up and filtering that have not been
-  specified, and the 20 ms debounce is unverified against the real switch.
-* The server has no authentication or transport security: localhost only.
+* The controller-side interlocks (probe fault, E-stop, over-temperature, both
+  link watchdogs) are evaluated on every firmware loop pass and the firmware
+  compiles — but none of them has ever run on a board, and the repository has no
+  automated tests to cover them (docs/01 §M).
+* The panel feeds the ESP-NOW watchdog by sending STATE/heartbeat traffic; the
+  bench serial path feeds its watchdog with a recognized command at least once a
+  second. Silence for 5 s (panel) or 3 s (serial) removes heater authority —
+  again, untested on hardware.
+* The E-stop input uses the ESP32's internal pull-up on `PIN_ESTOP_IN` (GPIO 16).
+  A long or unshielded run needs an external pull-up and filtering that have not
+  been specified, and the debounce is unverified against the real switch.
+* There is no server, so there is no authentication question — but there is also
+  no audit trail: physical access to the panel is the trust boundary.
 * Gas-roaster safety is out of scope: if a gas burner is used, a separately
   reviewed gas-safety architecture is required instead of this electric design.
 
@@ -159,27 +173,27 @@ approved before it supports a claim:
   demonstrate a validated roast for any variety.
 * Nested-use bean varieties (Liberica, Excelsa) have the least literature and
   the same placeholder state as the others — nothing has been assumed about them.
-* The end-to-end path for an operator-confirmed endpoint has been exercised in
-  simulation (including stage confirmation and completion), but the colour and
-  temperature evidence that would justify the criteria does not exist yet.
+* The end-to-end path for an operator-confirmed endpoint exists in code
+  (`RoastControl::checkEndpoint`, the panel's endpoint button and completion
+  popup) but has never been executed — no session of any kind has been run.
 
 ## 10. Software limitations
 
 * Single roast at a time; no queue, no multi-machine support.
-* The storage layer writes CSV/JSONL on the host filesystem; there is no
-  database, no retention policy and no encryption.
-* `research_log_period_s` defaults to the specified 30 s, which is coarse for
-  control analysis; the alternative must be recorded as a protocol deviation.
-* Charts downsample to ~600 points for the browser, so the on-screen curve is
-  not the full-resolution record; the CSV is.
-* Idle safety monitoring samples at 1 Hz; between sessions the values shown are
-  live but not recorded.
-* The simulator is a simple first-order model with synthetic colour kinetics. It
-  is a software test fixture, **not** a validated thermal model; simulator
-  numbers must never appear in a results table.
-* No user accounts, roles, or audit log beyond the recorded operator string.
-* Firmware has no OTA update and no on-board logging; a serial disconnect
-  mid-roast loses the firmware-side detail (the host keeps its own record).
+* **Nothing is recorded.** There is no SD writer and no session file: telemetry
+  lives on the wire, events live in a small volatile ring buffer on the panel,
+  and Curves history exists only while that screen is open. Power-off loses
+  everything (docs/01 §J).
+* There is no CSV/JSON export of any kind (REQ-LOG-003 `NOT-IMPLEMENTED`).
+* The two sketches each carry their own copy of `LinkFrames.h` (and
+  `GenProfiles.h` in the panel). They must be kept identical by hand; a mismatch
+  compiles fine and fails silently on CRC or length.
+* No user accounts, roles or audit log beyond the operator string on the
+  trial sheet.
+* Firmware has no OTA update: reflashing needs the USB cable.
+* The panel's charts downsample to a fixed point count, so the on-screen curve
+  is not full-resolution — and it is the only copy there is.
+* Idle monitoring shows live values between sessions, but records nothing.
 
 ## 11. Claims the project must not make yet
 
@@ -189,4 +203,4 @@ approved before it supports a claim:
 4. That stages are detected reliably.
 5. That the e-nose characterises aroma.
 6. That the system is safe to operate unattended.
-7. That simulated results predict real roasting behaviour.
+7. That anything in this repository has been demonstrated on hardware.

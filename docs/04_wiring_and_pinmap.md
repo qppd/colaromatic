@@ -102,21 +102,22 @@ Confirm the actual element and SSR count before wiring.
 
 | Software behaviour | Where | What it cannot do |
 |---|---|---|
-| Never energises the heater before a session starts | `engine.start_session` writes `SET,HEATER,0` | a welded SSR contact |
-| Caps duty at the commissioning ceiling until the circuit is verified | `config.system.json` → `heater.hardware_verified`, `commissioning_max_pct` | an SSR that ignores its input |
-| Removes heater authority on fault, staleness, link loss, estop | `control/safety.py`, `engine._force_heater_off` | break the mains circuit by itself |
-| Keeps cooling and ventilation running after a stop | `engine._begin_cooling` | prove that the fan is actually running (no feedback input today) |
-| Records every heater command change as an event | `engine._event("heater_command")` | detect a relay that did not follow the command unless the firmware feedback line is wired and `feedback_expected` is enabled |
-| Firmware re-evaluates every interlock on every loop pass (probe fault, E-stop, over-temperature, host silence) | `src/esp/ColAromatic/HeaterSafety.cpp::service()` | a firmware crash that leaves the output latched — hence the hardware cutoff |
-| Firmware turns the heater off after 3 s without host frames, and the host re-asserts its command every second so a live host never trips that watchdog | `CONF.h` `HOST_TIMEOUT_MS`, `engine.step()` keepalive | a USB adapter that keeps receiving while stopping delivering |
+| Never energises the heater before a session starts | `RoastControl` idle state; `HeaterSafety::begin()` drives both SSR pins low at boot | a welded SSR contact |
+| Caps duty at the commissioning ceiling until the circuit is verified | `GenConfig.h` `GEN_DUTY_CEILING_PCT`, applied by `RoastControl::shapeDuty` | an SSR that ignores its input |
+| Removes heater authority on fault, staleness, link loss, E-stop | `HeaterSafety::service()`, on every loop pass | break the mains circuit by itself |
+| Keeps cooling and ventilation running after a stop | `RoastControl::beginCooling`, fan driven from `ColAromatic.ino` stage 7 | prove that the fan is actually running (no feedback input today) |
+| Records heater command changes ≥ 5 % as events | `RoastControl::pushEvent` → panel diagnostics screen | persist them: there is no recorder (docs/01 §J) |
+| Firmware re-evaluates every interlock on every loop pass (probe fault, E-stop, over-temperature, link silence) | `src/esp/ColAromatic/HeaterSafety.cpp::service()` | a firmware crash that leaves the output latched — hence the hardware cutoff |
+| Firmware turns the heater off after 5 s without panel frames, or 3 s without recognized serial commands; the panel sends state every 500 ms so a live panel never trips its watchdog | `LinkFrames.h` `LINK_TIMEOUT_MS`, `CONF.h` `HOST_TIMEOUT_MS` | a USB adapter that keeps receiving while stopping delivering |
 
 ## 5. Recommended commissioning order (no beans, no mains first)
 
 1. Flash the firmware and watch the serial monitor with **no mains connected**.
 2. Verify every sensor frame: thermocouple in ice water and boiling water,
    colour sensor against a grey card, BME688 in still air.
-3. Verify the E-stop input and the host watchdog by pulling the USB cable while
-   the heater outputs are connected to LEDs instead of SSRs.
+3. Verify the E-stop input and **both** link watchdogs: pull the USB cable (3 s)
+   and power off the panel (5 s) while the heater outputs are connected to LEDs
+   instead of SSRs; the LEDs must go dark and the faults must appear.
 4. Connect the heater and fan SSRs with the loads **disconnected**; verify
    switching with a lamp load and confirm the commanded heater duty on a scope.
    Confirm the fan SSR is on for any non-zero fan command and off at zero.

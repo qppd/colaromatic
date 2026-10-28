@@ -23,11 +23,11 @@ every phase gate.
 
 | ID | Risk | L | I | P | Mitigation | Residual | Owner |
 |---|---|---|---|---|---|---|---|
-| D1 | Simulated data reported as measurements | 3 | 5 | 15 | `data_source` on every row, session and screen banner; analysis filter documented; this is a stated project rule | low | researcher |
+| D1 | Screen-read or transcribed numbers presented as raw logs | 3 | 5 | 15 | the machine records nothing (docs/01 §J), so every number comes from a photograph or a transcription; the trial sheet states the provenance and the reading resolution; this is a stated project rule | medium — provenance must be kept by hand | researcher |
 | D2 | Colour claims without a real calibration | 4 | 4 | 16 | status badges, degraded quality, blocked automatic colour input; calibration workflow documented | medium until measured | researcher |
-| D3 | Fabricated or assumed profile targets | 3 | 5 | 15 | profiles ship empty with `REQUIRES_CALIBRATION`; warnings in the GUI and summaries | low | researcher |
+| D3 | Fabricated or assumed profile targets | 3 | 5 | 15 | all 12 profiles ship `PROVISIONAL` with `autoEligible = 0`, so automatic mode cannot start; the panel shows the profile state | low | researcher |
 | D4 | A sensor fault silently missing from a dataset | 3 | 3 | 9 | quality columns per measurement; empty-for-missing convention; fault events | low | researcher |
-| D5 | Session files lost (disk failure) | 2 | 4 | 8 | export after each trial; back up the session directory; `STORAGE_FAILURE` alarm | low | operator |
+| D5 | Evidence lost because nothing is persisted (power-off, panel reset, screen history reset) | 4 | 4 | 16 | photograph dashboard/Curves/diagnostics at fixed intervals during a trial; transcribe immediately after; treat the panel's event list as volatile | high until a recorder exists (docs/01 §J, defect G2) | operator |
 | D6 | Statistics claimed beyond the design | 3 | 4 | 12 | analysis plan fixed before collection; report dispersion and effect sizes; pre-register replicates | low | researcher |
 | D7 | Insufficient replicates to compare strategies | 3 | 3 | 9 | staged plan; treat under-replicated results as exploratory only | medium | researcher |
 | D8 | Comparing across days with different ambient conditions | 3 | 3 | 9 | randomise run order within blocks; record ambient conditions | medium | operator |
@@ -36,13 +36,13 @@ every phase gate.
 
 | ID | Risk | L | I | P | Mitigation | Residual | Owner |
 |---|---|---|---|---|---|---|---|
-| P1 | Hardware delivery/parts delay | 3 | 4 | 12 | software is complete and hardware-independent; procure the safety items first; keep the staged fallback | medium | project lead |
+| P1 | Hardware delivery/parts delay | 3 | 4 | 12 | firmware is written and hardware-independent at the pin/threshold level (`PINS.h`, `CONF.h`); procure the safety items first; keep the staged fallback | medium | project lead |
 | P2 | Quotation/specification mismatch on delivery | 3 | 3 | 9 | verify every item on arrival against `docs/03...` §1 and update the BOM | medium | project lead |
-| P3 | HMI incompatible with the browser dashboard | 3 | 3 | 9 | decision documented with three options; a browser/panel PC needs no new code | medium | software |
+| P3 | Panel hardware does not match the panel firmware (board config, resolution, touch controller) | 4 | 4 | 16 | the sketch is written against LVGL 8 + `esp_panel`, but `esp_panel_board_custom_conf.h` is still the reference project's 7″ config; confirm the fitted panel before first flash (docs/14 B8, defect G6) | high until confirmed | embedded |
 | P4 | Colour calibration proves infeasible with the TCS3200 | 3 | 4 | 12 | documented fallback (different sensor or bench measurement of cool samples) to be approved, not purchased unilaterally | high | researcher |
 | P5 | Not enough time to validate all 12 profiles | 4 | 3 | 12 | staged approach: one variety × three levels validated, the rest explicitly PROVISIONAL | medium | researcher |
 | P6 | Late discovery of a safety problem blocks trials | 2 | 5 | 10 | commissioning sequence in `docs/04...` §5 runs before beans and before mains | low if followed | builder |
-| P7 | Firmware defects found only on hardware | 4 | 2 | 8 | protocol contract tests; staged bring-up with LED/lamp loads | medium | embedded |
+| P7 | Firmware defects found only on hardware | 5 | 3 | 15 | **there are no automated tests in the repository** (docs/01 §M, defect G11); the only defence is staged bring-up with LED/lamp loads, a serial-monitor session first, and a re-read of docs/09 before each stage | high | embedded |
 | P8 | Thesis deadline (19 Dec 2026) compresses analysis time | 3 | 4 | 12 | freeze the configuration before the analysis window; documentation maintained per phase | medium | project lead |
 
 ## D. Technical risks the software cannot remove
@@ -64,5 +64,5 @@ Re-score this register when any of the following happens:
 * the HMI model is identified;
 * colour calibration is measured (successfully or not);
 * the first supported roast completes;
-* the commissioning ceiling is raised or `heater.hardware_verified` changes;
+* the duty ceiling (`GEN_DUTY_CEILING_PCT`) is raised;
 * a defect in `docs/14_handover_checklist.md` §G is closed or a new one is added.

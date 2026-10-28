@@ -1,149 +1,239 @@
-# 06 — Fuzzy logic controller design and tuning methodology
+# 06 — Fuzzy controller design and tuning methodology
 
-> **The shipped rule base is INITIAL/UNVALIDATED.** The fuzzy controller
-> regulates a heater in a research prototype; it is not a validated roast
-> controller and it is not a safety device. No rule, term boundary or threshold
-> in `src/config/controllers/default_provisional.json` has been compared against
-> roasting trials in this repository.
+> **Both rule bases are INITIAL/UNVALIDATED.** The fuzzy controller regulates a
+> heater in a research prototype; it is not a validated roast controller and it
+> is not a safety device. No rule, term boundary or threshold here has been
+> compared against roasting trials in this repository.
 
-## 1. Method
+**Scope of this revision.** This document describes the firmware as it ships,
+not the removed Python host. The machine runs **two loops in series** (REQ-CTRL-001):
+
+```
+colour error (ratio units)  ──fuzzy──►  temperature setpoint °C  ──PID──►  duty %
+   ColorSetpoint.cpp                      RoastControl::onControlTick        Pid.cpp
+   outer loop                              inner loop
+```
+
+Both loops run inside `RoastControl` at the control period (`GEN` control
+period, 2 s), only in `MODE_AUTO`, only while the session is `RUNNING`.
+
+## 1. Method (shared by both tables)
 
 | Choice | Value | Why |
 |---|---|---|
 | Inference | Mamdani, min implication, max aggregation | transparent, easy to inspect, adequate for one output |
-| Defuzzification | centroid over a discretised output universe (101 points, 0–100 %) | deterministic and testable; no library dependency |
-| Membership functions | piecewise-linear point lists | every shape is reviewable in JSON; no hidden code |
-| Universe clipping | inputs outside the universe are clamped and a warning is reported | avoids undefined membership while surfacing the condition |
-| Missing input | no output at all (`status = missing_input`), caller commands 0 % | the controller never guesses |
-| No rule fired | `output.fallback_pct` (0 %) with an explicit status | deterministic and safe |
-| Rule metadata | id, antecedents, consequent, weight, rationale, status, evidence | an unvalidated rule cannot masquerade as a validated one |
+| Defuzzification | centroid over a discretised output universe (`GEN_FUZZY_OUT_RES` = 101 points) | deterministic and testable; no library dependency |
+| Membership functions | piecewise-linear point lists with shoulder clamping at the universe edge | every shape is reviewable in the table; no hidden code |
+| Universe clipping | inputs outside the universe are clamped | avoids undefined membership |
+| Missing input (NAN) | `status = missing_input`, output 0 | the controller never guesses |
+| No rule fired | the table's `fallback` output (0) with an explicit status | deterministic and safe |
+| Rule metadata | `id`, antecedents, consequent, weight | an unvalidated rule cannot masquerade as a validated one |
 
-Unit tests: `src/tests/test_fuzzy.py` (membership geometry, shouldering, inversion,
-missing inputs, clamping, output bounds, determinism, configuration validation).
+One implementation, `FuzzyController` in `Fuzzy.*`, evaluates **both** tables, so
+the algorithm cannot drift between them (REQ-FUZ-001). Statuses are surfaced as
+`ok` / `missing_input` / `no_rules_fired`.
 
-## 2. Inputs — what is used and what is deliberately not
+## 2. The outer loop: colour error → setpoint (`ColorSetpoint.cpp`)
 
-| Input | Enabled | Justification |
-|---|---|---|
-| `temp_error_c` = target − measured | **yes** | the primary control objective; measured reliably |
-| `ror_c_per_min` | **yes** | supplies the damping/anticipation term; measured reliably after ~10 s |
-| `delta_e` (colour deviation from the profile target) | **no, by default** | there is no calibrated colour target for any of the 12 profiles yet, so the input would be fed `None`. It can be enabled once a profile has a validated colour target **and** the colour calibration is `VALIDATED`; the engine refuses to start automatic control otherwise. |
-| Roast stage | not used as an input | stage is an outcome of the same measured variables; feeding it back adds rules without adding information |
-| Time / elapsed | not used as an input | time enters through the target trajectory, not as a separate antecedent |
-| Gas-sensor response | not used | no established relationship between gas response and a control target; would be speculation |
+**Input** `color_error = COLOR_TARGET_RATIO − browningRatio(R, G, B)`, universe
+**−0.30 … +0.30** ratio units. Negative = darker than target, positive = lighter.
 
-Two inputs keep the rule base inspectable (13 rules instead of 50+) and
-calibratable within a thesis timeline. Adding a third input multiplies the
-calibration burden and is deliberately deferred.
-
-## 3. Terms (all boundaries PROVISIONAL)
-
-`temp_error_c`, universe −25…+25 °C (target − measured)
+**Five input terms, spaced 0.15 apart.** Each side of a peak ramps to zero
+exactly where its neighbour's peak is, so at every error **at most two terms are
+non-zero and their memberships sum to 1.0**. That overlap is what makes the
+surface continuous — the controller never hands over from one rule to the next
+at a single point.
 
 | Term | Points | Meaning |
 |---|---|---|
-| `neg_large` | (−25,1) (−15,1) (−8,0) | far above target |
-| `neg_small` | (−12,0) (−5,1) (−1,0) | slightly above target |
-| `zero` | (−3,0) (0,1) (3,0) | at target |
-| `pos_small` | (1,0) (6,1) (13,0) | below target |
-| `pos_large` | (9,0) (16,1) (25,1) | far below target |
+| `very_dark` | (−0.30,1) (−0.15,0) | far too dark (shoulder) |
+| `dark` | (−0.30,0) (−0.15,1) (0.00,0) | darker than target |
+| `on_target` | (−0.15,0) (0.00,1) (0.15,0) | at target |
+| `light` | (0.00,0) (0.15,1) (0.30,0) | lighter than target |
+| `very_light` | (0.15,0) (0.30,1) | far too light (shoulder) |
 
-`ror_c_per_min`, universe −10…+30 °C/min
-
-| Term | Points | Meaning |
-|---|---|---|
-| `falling` | (−10,1) (−4,1) (0,0) | losing heat rise |
-| `steady` | (−1,0) (2,1) (6,0) | nominal rise |
-| `rising` | (4,0) (9,1) (14,0) | brisk rise |
-| `fast` | (12,0) (20,1) (30,1) | runaway risk |
-
-Output `heater_pct`, universe 0–100 %
+**Output** setpoint, universe **150 … 230 °C**, five consequents 20 °C apart:
 
 | Term | Points |
 |---|---|
-| `off` | (0,1) (4,1) (10,0) |
-| `low` | (5,0) (18,1) (32,0) |
-| `medium` | (26,0) (45,1) (64,0) |
-| `high` | (58,0) (75,1) (90,0) |
-| `full` | (85,0) (96,1) (100,1) |
+| `coolest` | (150,1) (170,0) |
+| `cooler` | (150,0) (170,1) (190,0) |
+| `target` | (170,0) (190,1) (210,0) |
+| `warmer` | (190,0) (210,1) (230,0) |
+| `hottest` | (210,0) (230,1) |
 
-These boundaries are an engineering judgement about *shape*, not roast data.
-They must be replaced by values derived from measured roasts (see §5).
+**Rules — one per term, deliberately monotonic** (darker → cooler, lighter →
+hotter), so the surface cannot fold back on itself:
 
-## 4. Rule base (13 rules, all `status: initial`)
+| Rule | Antecedent | Consequent |
+|---|---|---|
+| C1_very_dark_coolest | `very_dark` | `coolest` |
+| C2_dark_cooler | `dark` | `cooler` |
+| C3_on_target | `on_target` | `target` |
+| C4_light_warmer | `light` | `warmer` |
+| C5_very_light_hottest | `very_light` | `hottest` |
 
-| Rule | Antecedents | Consequent | Rationale |
-|---|---|---|---|
-| R01 | error `neg_large` | `off` | far above target: remove heat immediately |
-| R02 | error `neg_small` ∧ RoR `fast` | `off` | above target and still climbing: cut to avoid overshoot |
-| R03 | error `neg_small` ∧ RoR `steady` | `low` | above target, steady rise: hold a low input |
-| R04 | error `neg_small` ∧ RoR `falling` | `low` | above target but cooling: avoid a stall |
-| R05 | error `zero` ∧ RoR `fast` | `low` | at target and rising fast: anticipatory reduction |
-| R06 | error `zero` ∧ RoR `steady` | `medium` | maintain the current energy input |
-| R07 | error `zero` ∧ RoR `falling` | `high` | at target but the rise is decaying: add heat |
-| R08 | error `pos_small` ∧ RoR `fast` | `low` | below target but overshoot is likely |
-| R09 | error `pos_small` ∧ RoR `rising` | `medium` | below target, rising adequately |
-| R10 | error `pos_small` ∧ RoR `falling` | `high` | below target and cooling: strong correction |
-| R11 | error `pos_large` ∧ RoR `fast` | `medium` | far below target but climbing fast: limit input |
-| R12 | error `pos_large` ∧ RoR `steady` | `high` | far below target, adequate rise |
-| R13 | error `pos_large` ∧ RoR `falling` | `full` | far below target and stalling: maximum permitted heat |
+### 2.1 Why the terms are shaped this way (defect history)
 
-Every rule carries a rationale string in the configuration file, and
-`/api/controller` exposes the whole structure for review.
+The first version used **three wide terms with flat tops** (`darker` was 1 from
+−0.30 to −0.04). Combined with shoulder-shaped outputs it produced a **step
+function**: ~157 °C for every negative error, a 30 °C jump at −0.04, a flat
+190 °C around zero, then another jump. A setpoint that steps 30 °C inside one
+control tick is a step input to the PID and a step input to the plant.
 
-## 5. Procedure to develop the real rule base (Phase 7 → 8)
+The fix was structural, not cosmetic:
+
+1. five terms instead of three, so no flat plateau spans a third of the universe;
+2. **one consequent per term** instead of shared consequences;
+3. adjacent memberships that sum to 1.0 everywhere, so exactly two rules blend at
+   every point;
+4. `static_assert`s that the rule count and the consequent count agree — a rule
+   pointing past the end of `OUT_TERMS` would be an out-of-bounds read on the MCU.
+
+**Measured surface** (1201 samples across −0.30 … +0.30, reproduced from the
+table during review):
+
+| error | setpoint |
+|---|---|
+| −0.30 | 156.4 °C |
+| −0.15 | 170.0 °C |
+| 0.00 | 190.0 °C |
+| +0.15 | 210.0 °C |
+| +0.30 | 223.6 °C |
+
+* monotone: yes (largest backwards movement 0.003 °C — defuzzification quantisation);
+* **largest step: 0.15 °C** per 0.0005 of error (was 30 °C);
+* the extremes stop at 156.4 / 223.6 rather than reaching 150 / 230 because the
+  end terms are shoulders; the reachable range is therefore slightly inside the
+  universe. That is a property of shoulder defuzzification, not a bug.
+
+### 2.2 Fallbacks (REQ-CTRL-003)
+
+`RoastControl::onControlTick` picks the target in this order:
+
+1. the colour setpoint, **only** if `colorRatio` is not NAN *and*
+   `ColorSetpoint::setpointC()` returns a number;
+2. otherwise `targetAt(elapsed)` — the profile trajectory if one exists, else the
+   operator setpoint;
+3. otherwise no automatic control (the start is refused with a stated reason).
+
+Missing, out-of-range or saturated light therefore never produces a meaningless
+target. `_colorTarget` records which path was used, and the panel can show it.
+
+## 3. The inner loop: setpoint → duty
+
+The shipped inner loop is a **PID** (`Pid.*`), not fuzzy:
+
+* derivative **on measurement** (no derivative kick when the setpoint steps);
+* conditional integration and explicit limits, so the duty ceiling cannot wind
+  the integral up (`Pid::setLimits(0, dutyCeiling())` is re-applied every tick);
+* the output is clamped three times — by the PID limit, by
+  `RoastControl::shapeDuty` (ceiling, minimum on/off quantisation), and finally
+  by `HeaterSafety`, which may zero it at any moment;
+* every mode change, hold, cooling start and completion calls `_pid.reset()` so
+  no pre-hold integral carries into the next session.
+
+Manual mode (`MODE_MANUAL`) bypasses both loops entirely: the panel's duty
+slider value goes straight through `shapeDuty`.
+
+## 4. The dormant duty-side rule base (`GenFuzzy.h`)
+
+`GenFuzzy.h` still carries the **13-rule temperature→duty table**
+(`default_provisional`, `GEN_FUZZY_STATUS "INITIAL_UNVALIDATED"`), with inputs
+`temp_error_c` (−25…+25 °C), `ror_c_per_min` (−10…+30 °C/min) and `delta_e`
+(disabled, `enabled = 0`) and outputs `off…full` (0…100 %). It was generated from
+`src/config/controllers/default_provisional.json`, and it is **not referenced by
+the shipped control law** — the PID is used instead. It stays in the tree as:
+
+* a documented record of the original rule base (the rules are listed below);
+* an alternative inner loop that can be selected in code later, through the same
+  `FuzzyController`.
+
+| Rule | Antecedents | Consequent |
+|---|---|---|
+| R01 | error `neg_large` | `off` |
+| R02 | error `neg_small` ∧ RoR `fast` | `off` |
+| R03 | error `neg_small` ∧ RoR `steady` | `low` |
+| R04 | error `neg_small` ∧ RoR `falling` | `low` |
+| R05 | error `zero` ∧ RoR `fast` | `low` |
+| R06 | error `zero` ∧ RoR `steady` | `medium` |
+| R07 | error `zero` ∧ RoR `falling` | `high` |
+| R08 | error `pos_small` ∧ RoR `fast` | `low` |
+| R09 | error `pos_small` ∧ RoR `rising` | `medium` |
+| R10 | error `pos_small` ∧ RoR `falling` | `high` |
+| R11 | error `pos_large` ∧ RoR `fast` | `medium` |
+| R12 | error `pos_large` ∧ RoR `steady` | `high` |
+| R13 | error `pos_large` ∧ RoR `falling` | `full` |
+
+Term boundaries for these inputs are the geometric placeholders in `GenFuzzy.h`
+(`neg_large` (−25,1)(−15,1)(−8,0) … `fast` (12,0)(20,1)(30,1)). They are an
+engineering judgement about *shape*, not roast data.
+
+## 5. Why colour is an input at all — and what it needs
+
+The thesis title promises colour-informed control, so colour selects the
+**target**, not the duty:
+
+* a darker-than-target bean says "you are under-heating", which is a statement
+  about the *setpoint*, not about how many percent to apply;
+* the PID then does what it always does with that target;
+* the plant's gain and time constant stay the responsibility of the inner loop,
+  so the colour loop never has to model the heater.
+
+This is reachable **only after calibration**: `COLOR_TARGET_RATIO` in `CONF.h` is
+a placeholder, so today the colour error is measured against an unmeasured target
+(REQ-COL-007, docs/01 §C). Every shipped profile is `PROVISIONAL` and
+`autoEligible = 0`, so `RoastControl::start` refuses automatic mode outright.
+
+## 6. Procedure to develop the real tables (Phase 7 → 8)
 
 Do these in order; each produces a record to keep.
 
-1. **Establish the temperature target.** Either a measured trajectory per
-   profile (`temperature_reference.trajectory`) or an operator setpoint for
-   supervised commissioning. Without a target the controller cannot compute an
-   error, and automatic mode is refused.
+1. **Measure the colour target.** Reference patches on this machine, this
+   sensor, this geometry → a real `COLOR_TARGET_RATIO` per profile. Without it
+   the outer loop's error is meaningless (docs/07).
 2. **Characterise the plant, heater only, no beans.** At fixed duties (10, 20,
-   30 % of the commissioning ceiling), log the chamber temperature response.
-   Fit first-order gain and time constant. This is the data that justifies the
-   RoR term boundaries.
-3. **Choose controller period and duty ceiling.** The control period must be
-   much shorter than the plant time constant; the ceiling comes from the
-   electrical review, not from the controller.
-4. **Build the initial rule base** from the plant response, keeping every rule's
-   rationale in the file.
-5. **Closed-loop bench test, no beans.** Step the target (e.g. 100 → 150 → 200 °C)
-   and record overshoot, settling time, steady-state error, duty activity.
-6. **Tune** boundaries (not rules) against the recorded step responses. Keep old
-   versions: `ProfileManager.save` archives a changed validated profile.
-7. **Compare against a baseline.** A fixed-duty roast and a manual-duty roast
-   with the same target. Report the same metrics for all three. Only then can a
-   performance claim be made — and it must be stated as "for this plant, these
-   conditions".
-8. **Roast trials** (see `docs/10_experimental_protocol.md`), then revise.
+   30 % of the commissioning ceiling), log chamber temperature. Fit first-order
+   gain and time constant. This is the data that justifies the PID gains and, if
+   the fuzzy inner loop is ever enabled, the RoR term boundaries.
+3. **Choose the control period and the duty ceiling.** The period must be much
+   shorter than the plant time constant; the ceiling comes from the electrical
+   review, not from the controller.
+4. **Closed-loop bench test, no beans.** Step the target (100 → 150 → 200 °C) and
+   record overshoot, settling time, steady-state error and duty activity.
+5. **Tune boundaries, not rules.** Keep the previous table version alongside the
+   new one; a changed table is a changed configuration and must be recorded.
+6. **Compare against a baseline.** A fixed-duty roast and a manual-duty roast
+   with the same target, same metrics for all three. Only then can a performance
+   claim be made — and it must be stated as "for this plant, these conditions".
+7. **Roast trials** (docs/10), then revise.
 
-## 6. Anti-windup, limits and interaction with safety
+## 7. Anti-windup, limits and interaction with safety
 
-* There is no integrator, so there is no windup to manage. The controller is a
-  fuzzy proportional-plus-damping (PD-like) structure.
-* Output is clamped three times: by the controller universe (0–100 %), by the
-  profile `operating_limits.max_duty_pct`, and by the system ceiling
-  (`min(hardware_verified ? max_pct : commissioning_max_pct, approval max_duty_pct)`).
-* `HeaterOutput` then enforces minimum on/off times so short pulses cannot
-  damage the SSR or fail to switch it.
-* A **hold** action forces duty to 0 % while keeping monitoring and the fans
-  running.
-* The safety supervisor is independent: it can zero the duty regardless of what
-  the fuzzy controller asks for, and it latches over-temperature and E-stop
-  faults (REQ-FUZ-004).
+* The inner loop's integrator is conditional and reset on every state change, so
+  there is no windup through the ceiling.
+* Output is clamped three times: PID limit → `shapeDuty` (ceiling, minimum duty,
+  minimum on/off quantisation) → `HeaterSafety::service`, which computes the
+  zero-cross phase and can override everything.
+* A **hold** forces duty to 0 % while monitoring and the fan continue, and it
+  resets the PID so the pre-hold integral is not carried across.
+* The safety supervisor is independent: interlocks and latches remove heater
+  authority regardless of what either loop asks for, and a trip clears the duty
+  request as well as the output (REQ-FUZ-004).
 
-## 7. Known weaknesses of the current controller
+## 8. Known weaknesses of the current controller
 
-1. Rules and boundaries are unvalidated placeholders (§3).
-2. Colour is not yet part of the control law; the thesis title promises
-   colour-informed control, which is only reachable after calibration
-   (Phase 7).
-3. The plant model is unknown, so the controller period (2 s) and the RoR term
-   placement are judgements, not measurements.
-4. With the 30 % commissioning ceiling the controller can saturate: at maximum
+1. Both rule bases are unvalidated placeholders; nothing comes from roast data.
+2. `COLOR_TARGET_RATIO` is a placeholder, so the outer loop regulates toward an
+   unmeasured target even where it runs.
+3. Automatic mode cannot start at all: all 12 profiles are `autoEligible = 0`.
+   The shipped configuration is manual duty by design.
+4. The PID gains (`PID_KP/KI/KD` in `CONF.h`) are unexercised placeholders; there
+   is no plant model, so the 2 s control period is a judgement.
+5. With the commissioning duty ceiling the controller can saturate: at maximum
    permitted duty the process may still not reach the target. That is a
-   hardware/electrical limitation, and it is visible in the log as
-   `limited_by: ceiling` together with a persistent positive error.
-5. Step-response behaviour in simulation is a property of the **simulator**,
-   not of the roaster. It validates software behaviour only.
+   hardware/electrical limitation, visible as a persistent positive error next to
+   a duty pinned at the ceiling.
+6. The colour surface has been reproduced numerically from its tables during
+   review; it has never executed on a board, and there is **no simulator** in
+   this repository to exercise it against (REQ-SYS-006 `N/A`).

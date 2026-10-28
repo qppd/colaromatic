@@ -19,9 +19,9 @@ Consequences for this phase (Phase 1 of the master plan):
   included accessories are **UNVERIFIED**.
 * No datasheet-derived decision has been made anywhere in this repository. Every
   electrical statement is a question until the real parts are inspected.
-* The software was therefore built to be hardware-independent, with a single
-  boundary (`MachineInterface`) that is already implemented for both a simulator
-  and a serial-attached ESP32.
+* The firmware was therefore written with every GPIO in one header (`PINS.h`)
+  and every threshold in `CONF.h` / `GenConfig.h`, so the board, the pin map and
+  the limits can change without touching the control or safety logic.
 
 **Action required before hardware work:** attach the actual quotation,
 purchase receipts and photographs of the delivered parts. Then complete the
@@ -41,26 +41,29 @@ verification column below.
 | 8 | BME688 sensor | gas/VOC response | breakout board, I²C address, whether it can be placed outside the hot zone | UNVERIFIED |
 | 9 | Exhaust fan | exhaust | voltage, current, AC/DC, on/off or variable-speed control, static pressure | UNVERIFIED |
 | 10 | Convection fan | airflow | same as above, plus maximum temperature at the impeller | UNVERIFIED |
-| 11 | 5-inch HMI touchscreen | operator interface | **model, protocol, OS, whether it runs a browser** | UNVERIFIED — blocks GUI deployment decision |
+| 11 | 5-inch HMI touchscreen | operator interface | **exact model and resolution**: the firmware is LVGL 8 + `esp_panel` on an ESP32-S3 (`src/esp/HMI/`); the project README names the **ESP32-S3-Touch-LCD-4.3** | UNVERIFIED — `esp_panel_board_custom_conf.h` is still `ESP_PANEL_BOARD_NAME "Waveshare:ESP32-S3-Touch-LCD-7"` (800×480, ST7262) from the reference project; if the fitted panel is the 4.3" model, the display will not initialise (docs/14 B8, defect G6) |
 | 12 | Wiring, connectors, fuses, enclosure | electrical assembly | conductor gauge for the measured current, temperature ratings, enclosure class, strain relief, grounding | UNVERIFIED |
 | 13 | Quote line items: circuit diagrams, fuzzy programming, CAD, fabrication, integration, testing | services | which of these the supplier delivers vs what this project must produce | UNVERIFIED |
 
 ## 2. HMI decision (blocks REQ-GUI-009)
 
-Three plausible classes of "5-inch HMI" imply completely different GUIs:
+**Decision made:** the panel is a self-contained ESP32-S3 board running an
+LVGL 8 touch UI with the `esp_panel` BSP — class 2 below. It is not a browser
+device and it does not talk to a host; it talks to the controller over ESP-NOW
+(`src/esp/HMI/`, docs/02). The earlier options table (panel PC with a browser,
+serial HMI) was written when the GUI was a web dashboard and has been retired
+with it.
 
-| Class | Typical | Implication |
+| Class | Typical | Status |
 |---|---|---|
-| Panel PC / Android / Linux with browser or WebView | any 5" DSI/HDMI panel | point the browser at the host dashboard URL — **no new code** |
-| HDMI/SPI TFT driven by the ESP32 (LVGL-style) | bare 800×480 panel | the ESP32 would have to render the GUI; not implemented here |
-| Serial HMI (NEXTION family, RS-485, MODBUS) | plain touch module | needs a snapshot→panel adapter; not implemented here |
+| Panel PC / Android / Linux with browser or WebView | any 5" DSI/HDMI panel | **not used** — the browser dashboard was removed with the host |
+| HDMI/SPI TFT driven by an ESP32 (LVGL-style) | 4.3"/7" 800×480 panels | **chosen**: `src/esp/HMI/` with LVGL 8 + `esp_panel` |
+| Serial HMI (NEXTION family, RS-485, MODBUS) | plain touch module | not used |
 
-The delivered GUI is a **browser application**. It is verified working headless
-(static assets + WebSocket + REST). Deployment on the actual panel is
-**PENDING-HW** and depends on the model. Recommended action: identify the
-panel, then either (a) run a browser/WebView on it, or (b) keep the panel as a
-secondary display with a thin adapter, or (c) replace it — none of which should
-be done without approval, since it changes the agreed scope.
+What is still open is only the **physical panel**: `esp_panel_board_custom_conf.h`
+in the repository is the reference project's 7" 800×480 configuration. Identify
+the fitted panel (§8 step 3) and either confirm that config or replace it —
+without that, the sketch may compile and show nothing (docs/14 B8, defect G6).
 
 ## 3. Electrical questions that must be answered before any mains work
 
@@ -88,8 +91,8 @@ Answer these with a multimeter and the element nameplates, not from memory:
 10. Are the fan and drum motor isolated from the ESP32 supply and from the
     heater circuit?
 
-Until (1)–(5) and (8) are answered, `heater.hardware_verified` stays `false`,
-which caps every heater command at `commissioning_max_pct` (30 %).
+Until (1)–(5) and (8) are answered, `GEN_DUTY_CEILING_PCT` stays at its
+commissioning value (30 %), which caps every heater command.
 
 ## 4. Temperature sensing arrangement (blocks REQ-TEMP-004)
 
@@ -102,9 +105,9 @@ and bean temperature. Decide and document:
 | Probe touching the bean mass (through the drum wall or a poppet) | bean temperature | slow, noisy when the drum turns | needed for meaningful "bean temp" claims |
 | Both probes | both | — | preferred for research; costs one more MAX6675 channel/board |
 
-If both are installed, the host must be told which probe feeds the RoR control
-input. Today the engine consumes a single temperature channel
-(`MachineSample.temperature_c`); supporting two is a documented extension, not
+If both are installed, the firmware must be told which probe feeds the RoR and
+the control input. Today it consumes a single channel
+(`ThermocoupleSensor`); supporting two is a documented extension, not
 implemented.
 
 ## 5. Colour measurement arrangement (blocks REQ-COL-005)
@@ -114,9 +117,10 @@ measure CIELAB. For repeatable results during roasting you must control or
 record: illumination type and stability, distance from the bean surface,
 viewing angle, optical shielding from ambient light, dust/smoke on the window,
 window temperature (fogging), bean movement, and whether the measurement is of
-the whole batch or a sample. The software only requires that the calibration
-record documents the conditions (`reference_id`, `measured_at`, `provenance`).
-The **engineering** of that optical fixture is not solved by this repository.
+the whole batch or a sample. The firmware only needs the resulting target ratio
+(`COLOR_TARGET_RATIO` in `CONF.h`); the record of *how* it was obtained lives
+in docs/07. The **engineering** of that optical fixture is not solved by this
+repository.
 
 ## 6. Missing components / items to procure (provisional list)
 
@@ -139,21 +143,23 @@ The **engineering** of that optical fixture is not solved by this repository.
 
 | Check | Answer | Where |
 |---|---|---|
-| Does the host need a real-time operating system? | No: the engine schedules with an injected clock and runs on CPython. | `app/engine.py` |
-| Can the control loop run without the GUI? | Yes: headless engine, API optional. | `src/tools/run_simulation.py` |
-| Is a separate computer needed for "advanced image processing"? | Not for the current pipeline: colour is a 4-channel transform plus a 3×4 least-squares matrix fit. A colour reference fitting step runs in milliseconds. | `processing/color.py` |
-| Does the heater need PWM? | No: on/off time-proportioning with a 10 s window is used, which is what zero-cross SSRs require. | `control/heater.py` |
-| Does the fan need PWM? | No: it has its own SSR and is switched on/off. Any non-zero fan command runs it at full speed. | `HeaterSafety.cpp` |
-| Can the ESP32 and the HMI share the UART? | Unresolved — verify the HMI's interface before assigning pins. | `docs/04_wiring_and_pinmap.md` |
+| Does the controller need a real-time operating system? | No: one cooperative `loop()` pass with period-gated work; every interlock runs on every pass. | `ColAromatic.ino` |
+| Can the control loop run without the panel? | Yes: the controller owns the session. The panel can be unplugged; the only effect is that heater authority is removed after 5 s, which is the safe direction. | `HeaterSafety.*`, docs/02 §5 |
+| Is a separate computer needed for "advanced image processing"? | Not for what is implemented: colour is a ratio of three channel frequencies, computed on the ESP32. Colorimetry is deliberately absent (docs/07). | `ColorSetpoint.cpp` |
+| Does the heater need PWM? | No: on/off time-proportioning with a 10 s window is used, which is what zero-cross SSRs require. | `HeaterSafety::service` |
+| Does the fan need PWM? | No: it has its own SSR and is switched on/off. Any non-zero fan command runs it at full speed. | `HeaterSafety::setFan` |
+| Can the ESP32 and the panel share the UART? | No need: the panel has its own ESP-NOW radio link; the UART is the service port only. | `docs/04_wiring_and_pinmap.md` |
+| Is a PC needed to roast? | No. That is the point of the architecture (REQ-SYS-001). | docs/02 |
 
 ## 8. Recommended next actions (hardware, in order)
 
 1. Photograph and transcribe the actual quotation and delivered parts into the
    table in §1 with part numbers.
 2. Measure the heating elements and answer §3 questions 1–5.
-3. Confirm the HMI class (§2) and decide the GUI deployment path.
+3. Confirm the fitted panel model and align `esp_panel_board_custom_conf.h`
+   with it (§2).
 4. Decide the probe arrangement (§4) and order the second channel if needed.
 5. Buy the missing safety items (§6) before assembling anything mains-powered.
 6. Only then: build the control circuit **without** mains connected, verify
-   logic-level switching with a lamp or LED load, and enable
-   `heater.hardware_verified` only after the electrical review.
+   logic-level switching with a lamp or LED load, and raise the duty ceiling
+   only after the electrical review is documented in §3.
